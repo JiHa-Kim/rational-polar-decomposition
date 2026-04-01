@@ -123,7 +123,7 @@ The benchmark logs:
 - `runtime_ms_min`
 - `ortho_fro = ||Q^T Q - I||_F / sqrt(n)`
 - `q_fro_error`, if reference polar computation is enabled
-- `objective_ratio = <Q, A> / <Q_ref, A>`, if reference is enabled
+- `objective_ratio = <Q, A> / <Q_*, A>`, if reference is enabled
 - `objective_proj`, if audit is enabled: objective ratio after projecting `Q` to the nearest orthogonal factor
 - DWH Cholesky health stats:
   - `chol_calls`
@@ -133,6 +133,8 @@ The benchmark logs:
   - `diag_floored`
 
 Reference quality evaluation is optional and is computed only from the matrix itself via a float64 eigendecomposition of `A^T A`.
+
+The reference path is also small-side now: it stores only the inverse square root of `A^T A` and derives `q_fro_error` chunkwise from `A @ (A^T A)^{-1/2}` instead of materializing the full reference polar factor.
 
 The audit path is intentionally low-memory. Instead of forming a tall float64 SVD of `Q`, it accumulates `Q^T Q` and `Q^T A` in row chunks and does only the final `n x n` eigendecomposition in float64. That keeps the audit feasible on GPUs where the timed benchmark itself fits but a naive audit does not.
 
@@ -175,6 +177,8 @@ uv run bench --device cuda --tf32 --reference fp32 --audit --audit-device same -
 ```
 
 Lower `--audit-chunk-rows` further if your GPU is still tight on memory.
+
+If you only need `q_fro_error` and `objective_ratio`, `--reference fp32` already uses the low-memory small-side reference representation and avoids storing the full reference `Q_ref`.
 
 ## File layout
 

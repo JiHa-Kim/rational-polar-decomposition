@@ -42,6 +42,13 @@ class Record:
     diag_floored: int
 
 
+@dataclass(frozen=True)
+class ReferencePolar:
+    inv_sqrt: torch.Tensor
+    objective: float
+    transposed: bool
+
+
 def set_fast_matmul(tf32: bool) -> None:
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = tf32
@@ -146,7 +153,7 @@ def normalize_fro(a: torch.Tensor) -> torch.Tensor:
 
 def polar_reference(
     a: torch.Tensor, dtype: torch.dtype = torch.float32
-) -> tuple[torch.Tensor, float]:
+) -> ReferencePolar:
     transposed = False
     x = a
     if x.shape[0] < x.shape[1]:
@@ -159,11 +166,12 @@ def polar_reference(
     cutoff = float(torch.finfo(dtype).eps) * max(float(evals.max().item()), 1.0)
     evals = evals.clamp_min(cutoff)
     inv_sqrt = (evecs * torch.rsqrt(evals)[None, :]) @ evecs.mT
-    q_ref = x_ref @ inv_sqrt
-    if transposed:
-        q_ref = q_ref.mT.contiguous()
-    opt_obj = float(torch.sum(q_ref * a.to(dtype)).item())
-    return q_ref.to(a.dtype), opt_obj
+    opt_obj = float(torch.sum(inv_sqrt * g).item())
+    return ReferencePolar(
+        inv_sqrt=inv_sqrt,
+        objective=opt_obj,
+        transposed=transposed,
+    )
 
 
 def measure(
@@ -230,33 +238,32 @@ def _projected_objective_ratio(
 
 def _q_fro_error(
     q: torch.Tensor,
-    ref_q: torch.Tensor,
+    a: torch.Tensor,
+    ref: ReferencePolar,
     *,
     chunk_rows: int,
 ) -> float:
-    if ref_q.device == q.device and (chunk_rows <= 0 or chunk_rows >= q.shape[0]):
-        return float(
-            torch.linalg.matrix_norm(q - ref_q, ord="fro").item() / math.sqrt(q.shape[1])
-        )
-
-    target_device = q.device
-    block_rows = q.shape[0] if chunk_rows <= 0 else chunk_rows
+    q_use = q.mT.contiguous() if ref.transposed else q
+    a_use = a.mT.contiguous() if ref.transposed else a
+    target_device = ref.inv_sqrt.device
+    target_dtype = ref.inv_sqrt.dtype
+    block_rows = q_use.shape[0] if chunk_rows <= 0 else chunk_rows
     sq = torch.zeros((), device=target_device, dtype=torch.float64)
-    for start in range(0, q.shape[0], block_rows):
-        stop = min(start + block_rows, q.shape[0])
-        q_chunk = q[start:stop].to(device=target_device, dtype=torch.float64)
-        ref_chunk = ref_q[start:stop].to(device=target_device, dtype=torch.float64)
-        diff = q_chunk - ref_chunk
+    for start in range(0, q_use.shape[0], block_rows):
+        stop = min(start + block_rows, q_use.shape[0])
+        a_chunk = a_use[start:stop].to(device=target_device, dtype=target_dtype)
+        q_chunk = q_use[start:stop].to(device=target_device, dtype=target_dtype)
+        ref_chunk = a_chunk @ ref.inv_sqrt
+        diff = (q_chunk - ref_chunk).to(torch.float64)
         sq += torch.sum(diff * diff)
-    return float(torch.sqrt(sq).item() / math.sqrt(q.shape[1]))
+    return float(torch.sqrt(sq).item() / math.sqrt(q_use.shape[1]))
 
 
 def summarize(
     *,
     case: Case,
     q: torch.Tensor,
-    ref_q: Optional[torch.Tensor],
-    ref_obj: Optional[float],
+    ref: Optional[ReferencePolar],
     times: Sequence[float],
     method: str,
     trials: int,
@@ -275,14 +282,15 @@ def summarize(
     q_fro_error = None
     objective_ratio = None
     objective_proj = None
-    if ref_q is not None and ref_obj is not None:
+    if ref is not None:
         q_fro_error = _q_fro_error(
             q,
-            ref_q,
+            case.a,
+            ref,
             chunk_rows=audit_chunk_rows,
         )
         objective = float(torch.sum(q * case.a).item())
-        objective_ratio = float(objective / ref_obj)
+        objective_ratio = float(objective / ref.objective)
 
         # Projected objective: Q_proj = Q (Q^T Q)^{-1/2} = U V^T from SVD(Q)
         if audit:
@@ -292,7 +300,7 @@ def summarize(
                 objective_proj = _projected_objective_ratio(
                     q,
                     case.a,
-                    ref_obj,
+                    ref.objective,
                     audit_device=audit_device,
                     audit_chunk_rows=audit_chunk_rows,
                 )
@@ -350,7 +358,7 @@ def main() -> None:
         type=str,
         default="none",
         choices=["none", "fp32", "fp64"],
-        help="Reference polar computation precision (fp64 is very slow/memory-intensive).",
+        help="Reference polar computation precision; uses a low-memory small-side representation.",
     )
     parser.add_argument(
         "--audit",
@@ -368,7 +376,7 @@ def main() -> None:
         "--audit-chunk-rows",
         type=int,
         default=2048,
-        help="Rows per chunk for low-memory projected-objective audit accumulation.",
+        help="Rows per chunk for low-memory reference error and projected-objective audit accumulation.",
     )
     parser.add_argument(
         "--cases",
@@ -428,15 +436,13 @@ def main() -> None:
                 a = normalize_fro(case.a).contiguous()
                 case = Case(name=case.name, a=a)
 
-                ref_q = None
-                ref_obj = None
+                ref = None
                 if args.reference != "none":
                     ref_dtype = (
                         torch.float64 if args.reference == "fp64" else torch.float32
                     )
-                    ref_q, ref_obj = polar_reference(case.a, dtype=ref_dtype)
-                    if args.audit and ref_q.is_cuda:
-                        ref_q = ref_q.cpu()
+                    ref = polar_reference(case.a, dtype=ref_dtype)
+                    if args.audit and ref.inv_sqrt.is_cuda:
                         torch.cuda.empty_cache()
 
                 # Pre-calculate stress coefficients if needed
@@ -460,8 +466,7 @@ def main() -> None:
                     record = summarize(
                         case=case,
                         q=out.q,
-                        ref_q=ref_q,
-                        ref_obj=ref_obj,
+                        ref=ref,
                         times=times,
                         method=method_name,
                         trials=args.trials,

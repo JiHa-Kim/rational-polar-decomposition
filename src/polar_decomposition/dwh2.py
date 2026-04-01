@@ -1,17 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import List, Tuple
 
 import torch
 
-from .precond import CholStats, spd_inverse_fast, spd_inverse_safe
-
-
-@dataclass
-class DWH2Result:
-    q: torch.Tensor
-    stats: CholStats
+from .precond import CholStats, PolarResult, spd_inverse_fast, spd_inverse_safe
 
 
 def dwh_coefficients(ell: float) -> Tuple[float, float, float, float]:
@@ -48,7 +41,7 @@ def dwh2(
     robust: bool = False,
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,
-) -> DWH2Result:
+) -> PolarResult:
     """Two-step DWH via small-side accumulation.
 
     All O(n³) work is done on the n×n Gram side. Only two O(mn²) matmuls
@@ -116,4 +109,4 @@ def dwh2(
 
     if transposed:
         result = result.mT.contiguous()
-    return DWH2Result(q=result, stats=stats)
+    return PolarResult(q=result, stats=stats)

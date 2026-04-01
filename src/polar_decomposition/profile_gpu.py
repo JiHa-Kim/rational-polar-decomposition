@@ -9,7 +9,7 @@ from typing import Callable
 import torch
 from torch.profiler import ProfilerActivity, profile
 
-from .bench import Case, make_case, normalize_fro, set_fast_matmul
+from .bench import make_case, normalize_fro, set_fast_matmul
 from .dwh2 import dwh2
 from .pe5 import PAPER_MUON_ELL, pe5, pe5_coefficients
 

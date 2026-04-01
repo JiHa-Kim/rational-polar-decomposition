@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from math import inf, sqrt
 from typing import List, Sequence, Tuple
 
 import numpy as np
 import torch
+
+from .precond import PolarResult
 
 
 PAPER_MUON_ELL = 1e-3
@@ -14,10 +15,6 @@ PAPER_SAFETY = 1.01
 PAPER_FIRST_GRAM_JITTER = 0.0
 PAPER_NORM_EPS = 1e-3
 
-
-@dataclass
-class PE5Result:
-    q: torch.Tensor
 
 
 def _optimal_quintic(l: float, u: float = 1.0) -> Tuple[float, float, float]:
@@ -151,7 +148,7 @@ def pe5(
     coeffs: Sequence[Tuple[float, float, float]] | None = None,
     first_gram_jitter: float = PAPER_FIRST_GRAM_JITTER,
     symmetrize_inputs: bool = False,
-) -> PE5Result:
+) -> PolarResult:
     """Five-step Polar Express with a leaner GPU-oriented inner loop.
 
     The baseline implementation symmetrized several small-side matrices every
@@ -181,4 +178,4 @@ def pe5(
 
     if transposed:
         x = x.mT.contiguous()
-    return PE5Result(q=x)
+    return PolarResult(q=x)

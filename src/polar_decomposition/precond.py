@@ -1,8 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
+
+
+@dataclass
+class PolarResult:
+    """Unified return type for all polar decomposition methods."""
+    q: torch.Tensor
+    stats: CholStats = field(default_factory=lambda: CholStats())
 
 
 @dataclass

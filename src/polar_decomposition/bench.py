@@ -10,9 +10,9 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import torch
 
-from .dwh2 import DWH2Result, dwh2
-from .pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, PE5Result, pe5, pe5_coefficients
-from .precond import CholStats
+from .dwh2 import dwh2
+from .pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
+from .precond import CholStats, PolarResult
 
 
 @dataclass(frozen=True)
@@ -373,28 +373,21 @@ def main() -> None:
 
                 for method_name in args.methods:
                     out, times = measure(methods[method_name], args.trials, args.warmup)
-                    if isinstance(out, DWH2Result):
-                        q = out.q
-                        stats = out.stats
-                    elif isinstance(out, PE5Result):
-                        q = out.q
-                        stats = CholStats()
-                    else:
-                        raise TypeError(f"unexpected output type: {type(out)}")
+                    assert isinstance(out, PolarResult)
 
                     record = summarize(
                         case=case,
-                        q=q,
+                        q=out.q,
                         ref_q=ref_q,
                         ref_obj=ref_obj,
                         times=times,
                         method=method_name,
                         trials=args.trials,
-                        stats=stats,
+                        stats=out.stats,
                         is_stress=is_stress,
                         audit=args.audit,
                     )
-                    row = json.dumps(asdict(record), sort_keys=True)
+                    row = json.dumps(asdict(record))
                     if not args.quiet:
                         print(row, flush=True)
                     if out_f is not None:

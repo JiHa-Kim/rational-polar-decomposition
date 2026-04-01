@@ -72,12 +72,30 @@ def _inverse_from_cholesky(
     *,
     out: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Form L^{-T} L^{-1} via two triangular solves.
+    """Form L^{-T} L^{-1}.
 
-    On this GPU this is materially faster than torch.cholesky_inverse for the
-    4k x 4k SPD blocks used by DWH2, while staying numerically equivalent for
-    benchmark purposes.
+    The default path uses two triangular solves, which is already faster than
+    torch.cholesky_inverse on this GPU. On large CUDA float32 blocks with TF32
+    matmuls enabled, a recursive block inverse shifts more work to GEMMs and is
+    faster still.
     """
+    if (
+        l.is_cuda
+        and l.dtype == torch.float32
+        and l.ndim == 2
+        and l.shape[0] == l.shape[1]
+        and l.shape[0] >= 1024
+        and torch.backends.cuda.matmul.allow_tf32
+    ):
+        return _inverse_from_cholesky_recursive(l, out=out)
+    return _inverse_from_cholesky_solve(l, out=out)
+
+
+def _inverse_from_cholesky_solve(
+    l: torch.Tensor,
+    *,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
     inv_a = (
         torch.empty_like(l) if out is None or out.data_ptr() == l.data_ptr() else out
     )
@@ -85,6 +103,44 @@ def _inverse_from_cholesky(
     inv_a.diagonal().fill_(1.0)
     torch.linalg.solve_triangular(l, inv_a, upper=False, left=True, out=inv_a)
     torch.linalg.solve_triangular(l.mT, inv_a, upper=True, left=True, out=inv_a)
+    return inv_a
+
+
+def _tri_inverse_recursive(l: torch.Tensor, leaf: int = 512) -> torch.Tensor:
+    n = l.shape[0]
+    if n <= leaf:
+        out = torch.zeros_like(l)
+        out.diagonal().fill_(1.0)
+        torch.linalg.solve_triangular(l, out, upper=False, left=True, out=out)
+        return out
+
+    k = n // 2
+    a = l[:k, :k]
+    c = l[k:, :k]
+    d = l[k:, k:]
+
+    a_inv = _tri_inverse_recursive(a, leaf)
+    d_inv = _tri_inverse_recursive(d, leaf)
+    tmp = d_inv @ c
+    off = -(tmp @ a_inv)
+
+    out = torch.zeros_like(l)
+    out[:k, :k].copy_(a_inv)
+    out[k:, :k].copy_(off)
+    out[k:, k:].copy_(d_inv)
+    return out
+
+
+def _inverse_from_cholesky_recursive(
+    l: torch.Tensor,
+    *,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
+    inv_a = (
+        torch.empty_like(l) if out is None or out.data_ptr() == l.data_ptr() else out
+    )
+    l_inv = _tri_inverse_recursive(l)
+    torch.mm(l_inv.mT, l_inv, out=inv_a)
     return inv_a
 
 

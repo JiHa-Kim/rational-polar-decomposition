@@ -102,14 +102,13 @@ def _apply_block(
     symmetrize_inputs: bool,
 ) -> torch.Tensor:
     n = x.shape[1]
-    eye = torch.eye(n, device=x.device, dtype=x.dtype)
     y = x.mT @ x
     if symmetrize_inputs:
         y = _symmetrize(y)
     if first_block and first_gram_jitter:
         y.diagonal().add_(first_gram_jitter)
 
-    q = eye.clone()
+    q = torch.eye(n, device=x.device, dtype=x.dtype)
     e = torch.empty_like(y)
     e2 = torch.empty_like(y)
     h = torch.empty_like(y)
@@ -117,12 +116,13 @@ def _apply_block(
     q_new = torch.empty_like(y)
 
     for h0, h1, h2 in coeffs:
-        torch.sub(eye, y, out=e)
+        torch.neg(y, out=e)
+        e.diagonal().add_(1.0)
         torch.mm(e, e, out=e2)
         
         torch.mul(e2, h2, out=h)
         h.add_(e, alpha=h1)
-        h.add_(eye, alpha=h0)
+        h.diagonal().add_(h0)
         
         if symmetrize_inputs:
             h = _symmetrize(h)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
 
@@ -30,16 +29,6 @@ def _default_form_u(dtype: torch.dtype, tf32: bool) -> float:
     return float(torch.finfo(dtype).eps)
 
 
-def _scale_rhs(
-    b: torch.Tensor,
-    s: torch.Tensor,
-    out: Optional[torch.Tensor],
-) -> torch.Tensor:
-    scale = s[:, None]
-    if out is None:
-        return b * scale
-    torch.mul(b, scale, out=out)
-    return out
 
 
 def spd_cholesky_solve_fast(
@@ -79,9 +68,8 @@ def spd_cholesky_solve_fast(
     l = torch.linalg.cholesky(a)
     inv_a = torch.cholesky_inverse(l, upper=False)
 
-    rhs_input = _scale_rhs(b, s, None)
-    rhs = torch.mm(inv_a, rhs_input, out=out)
-    rhs.mul_(s[:, None])
+    inv_a.mul_(s[:, None]).mul_(s[None, :])
+    rhs = torch.mm(inv_a, b, out=out)
 
     stats.update(shifted=jitter > 0.0, retries=0, jitter=jitter, diag_floored=0)
     return rhs
@@ -116,7 +104,6 @@ def spd_cholesky_solve_safe(
 
     s = torch.rsqrt(diag)
     a.mul_(s[:, None]).mul_(s[None, :])
-    rhs = _scale_rhs(b, s, out)
 
     base_shift = max(base_shift_scale * _default_form_u(a.dtype, tf32), 1e-7)
     shifted = False
@@ -141,10 +128,9 @@ def spd_cholesky_solve_safe(
         retries += 1
 
     inv_a = torch.cholesky_inverse(l, upper=False)
+    inv_a.mul_(s[:, None]).mul_(s[None, :])
 
-    rhs_input = _scale_rhs(b, s, None)
-    rhs = torch.mm(inv_a, rhs_input, out=out)
-    rhs.mul_(s[:, None])
+    rhs = torch.mm(inv_a, b, out=out)
 
     stats.update(shifted=shifted, retries=retries, jitter=jitter, diag_floored=0)
     return rhs

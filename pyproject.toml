@@ -26,8 +26,6 @@ explicit = true
 torch = [{ index = "pytorch-cuda" }]
 torchvision = [{ index = "pytorch-cuda" }]
 torchaudio = [{ index = "pytorch-cuda" }]
-[tool.ruff]
-ignore = ["E741"]
 
 [tool.ruff.lint]
 ignore = ["E741"]

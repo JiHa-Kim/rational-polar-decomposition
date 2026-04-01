@@ -54,7 +54,7 @@ def main() -> None:
             "max-autotune",
             "max-autotune-no-cudagraphs",
         ],
-        default="max-autotune",
+        default="eager",
     )
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--iters", type=int, default=25)

@@ -201,8 +201,12 @@ def measure(
                 times.append(float(start.elapsed_time(end)))
             return out, times
     for _ in range(trials):
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         t0 = time.perf_counter()
         out = fn()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         times.append((time.perf_counter() - t0) * 1000.0)
     return out, times
 

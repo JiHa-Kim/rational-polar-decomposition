@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import List, Tuple
 
 import torch
-import torch._dynamo
 
-from .precond import CholStats, spd_cholesky_solve
-
-torch._dynamo.config.capture_scalar_outputs = True
+from .precond import CholStats, spd_cholesky_solve_fast, spd_cholesky_solve_safe
 
 
 @dataclass
@@ -18,7 +15,6 @@ class DWH2Result:
     stats: CholStats
 
 
-# Nakatsukasa-Bai-Gygi DWH scalar schedule.
 def dwh_coefficients(ell: float) -> Tuple[float, float, float, float]:
     ell = float(max(min(ell, 1.0), 1e-12))
     gamma = (4.0 * (1.0 - ell * ell) / (ell**4)) ** (1.0 / 3.0)
@@ -34,16 +30,30 @@ def dwh_coefficients(ell: float) -> Tuple[float, float, float, float]:
     return a, b, c, ell_next
 
 
+def _dwh_schedule(ell0: float, steps: int = 2) -> Tuple[List[Tuple[float, float, float]], float]:
+    coeffs: List[Tuple[float, float, float]] = []
+    ell = float(ell0)
+    for _ in range(steps):
+        a, b, c, ell = dwh_coefficients(ell)
+        coeffs.append((a, b, c))
+    return coeffs, ell
+
+
 def dwh2(
     a: torch.Tensor,
     *,
     ell0: float = 1e-3,
     tf32: bool = True,
+    robust: bool = False,
+    scaled_jitter_scale: float = 2.0,
+    diag_floor_rel: float = 0.0,
 ) -> DWH2Result:
-    """Two-step direct DWH iteration for tall matrices.
+    """Two-step direct DWH iteration optimized for repeated GPU execution.
 
-    Input is assumed to already be normalized by a matrix-only scale such as ||A||_F.
-    The implementation is direct rectangular DWH, but every solve is done on the small side.
+    Main changes versus the baseline:
+      * small-side Gram is written into a persistent buffer via `out=`
+      * the hot solve path is branch-free and compile-friendly by default
+      * no Python scalar syncs in the default path
     """
     assert a.ndim == 2
     transposed = False
@@ -53,20 +63,32 @@ def dwh2(
         transposed = True
 
     n = x.shape[1]
-    eye = torch.eye(n, device=x.device, dtype=x.dtype)
+    m = x.shape[0]
+    gram = torch.empty((n, n), device=x.device, dtype=x.dtype)
+    rhs = torch.empty((n, m), device=x.device, dtype=x.dtype)
     stats = CholStats()
-    ell = float(ell0)
 
-    for _ in range(2):
-        aa, bb, cc, ell = dwh_coefficients(ell)
-        s = torch.addmm(eye, x.mT, x, alpha=cc)
-        # Affine-resolvent identity:
-        # (aI + bG)(I + cG)^{-1} = (b/c)I + (a - b/c)(I + cG)^{-1}.
+    coeffs, ell_final = _dwh_schedule(ell0=ell0, steps=2)
+    solve = spd_cholesky_solve_safe if robust else spd_cholesky_solve_fast
+
+    for aa, bb, cc in coeffs:
+        torch.mm(x.mT, x, out=gram)
+        gram.mul_(cc)
+        gram.diagonal().add_(1.0)
+
         alpha = bb / cc
         beta = aa - alpha
-        solved_t = spd_cholesky_solve(s, x.mT, stats, tf32=tf32)
+        solved_t = solve(
+            gram,
+            x.mT,
+            stats,
+            tf32=tf32,
+            out=rhs,
+            diag_floor_rel=(1e-6 if robust else diag_floor_rel),
+            **({"scaled_jitter_scale": scaled_jitter_scale} if not robust else {}),
+        )
         x.mul_(alpha).add_(solved_t.mT, alpha=beta)
 
     if transposed:
         x = x.mT.contiguous()
-    return DWH2Result(q=x, ell_final=ell, stats=stats)
+    return DWH2Result(q=x, ell_final=ell_final, stats=stats)

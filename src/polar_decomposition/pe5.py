@@ -82,18 +82,14 @@ def pe5_coefficients(
     return coeffs
 
 
-def _eval_h_centered(
-    y: torch.Tensor, eye: torch.Tensor, coeff: Tuple[float, float, float]
-) -> torch.Tensor:
-    a, b, c = coeff
-    # h(z) = a + bz + cz^2, evaluated around z = 1 via E = I - Y.
-    e = eye - y
-    e2 = e @ e
-    h0 = a + b + c
-    h1 = -(b + 2.0 * c)
-    h2 = c
-    h = h0 * eye + h1 * e + h2 * e2
-    return 0.5 * (h + h.mT)
+def centered_coefficients(
+    coeffs: Sequence[Tuple[float, float, float]],
+) -> List[Tuple[float, float, float]]:
+    return [(a + b + c, -(b + 2.0 * c), c) for (a, b, c) in coeffs]
+
+
+def _symmetrize(a: torch.Tensor) -> torch.Tensor:
+    return 0.5 * (a + a.mT)
 
 
 def _apply_block(
@@ -103,21 +99,43 @@ def _apply_block(
     *,
     first_block: bool,
     first_gram_jitter: float,
+    symmetrize_inputs: bool,
 ) -> torch.Tensor:
     n = x.shape[1]
     eye = torch.eye(n, device=x.device, dtype=x.dtype)
     y = x.mT @ x
-    y.add_(y.mT.clone()).mul_(0.5)
+    if symmetrize_inputs:
+        y = _symmetrize(y)
     if first_block and first_gram_jitter:
         y.diagonal().add_(first_gram_jitter)
 
-    q = eye
-    for coeff in coeffs:
-        h = _eval_h_centered(y, eye, coeff)
-        q = q @ h
-        yh = y @ h
-        y = yh @ h
-        y.add_(y.mT.clone()).mul_(0.5)
+    q = eye.clone()
+    e = torch.empty_like(y)
+    e2 = torch.empty_like(y)
+    h = torch.empty_like(y)
+    temp = torch.empty_like(y)
+    q_new = torch.empty_like(y)
+
+    for h0, h1, h2 in coeffs:
+        torch.sub(eye, y, out=e)
+        torch.mm(e, e, out=e2)
+        
+        torch.mul(e2, h2, out=h)
+        h.add_(e, alpha=h1)
+        h.add_(eye, alpha=h0)
+        
+        if symmetrize_inputs:
+            h = _symmetrize(h)
+
+        torch.mm(q, h, out=q_new)
+        q, q_new = q_new, q
+        
+        torch.mm(y, h, out=temp)
+        torch.mm(temp, h, out=y)
+        
+        if symmetrize_inputs:
+            y = _symmetrize(y)
+
     return torch.mm(x, q, out=out)
 
 
@@ -128,12 +146,13 @@ def pe5(
     restart_interval: int = 3,
     coeffs: Sequence[Tuple[float, float, float]] | None = None,
     first_gram_jitter: float = PAPER_FIRST_GRAM_JITTER,
+    symmetrize_inputs: bool = False,
 ) -> PE5Result:
-    """Five-step Polar Express using the fast small-side formulation with restart-3.
+    """Five-step Polar Express with a leaner GPU-oriented inner loop.
 
-    Input is assumed to already be normalized by a matrix-only scale. This function applies the
-    paper's degree-5 offline coefficients with finite-precision modifications and the first-block
-    Gram jitter described for the fast rectangular algorithm.
+    The baseline implementation symmetrized several small-side matrices every
+    step using clone-heavy bandwidth passes. That is good for debugging but often
+    not worth the cost on the main latency path. Here it is opt-in instead.
     """
     assert a.ndim == 2
     transposed = False
@@ -142,16 +161,17 @@ def pe5(
         x = x.mT.contiguous()
         transposed = True
 
-    coeffs = list(coeffs or pe5_coefficients(ell0=ell0, steps=5))
+    centered = centered_coefficients(coeffs or pe5_coefficients(ell0=ell0, steps=5))
     x_buffer = torch.empty_like(x)
-    for i in range(0, len(coeffs), restart_interval):
-        block = coeffs[i : i + restart_interval]
+    for i in range(0, len(centered), restart_interval):
+        block = centered[i : i + restart_interval]
         x_buffer = _apply_block(
             x,
             x_buffer,
             block,
             first_block=(i == 0),
             first_gram_jitter=first_gram_jitter,
+            symmetrize_inputs=symmetrize_inputs,
         )
         x, x_buffer = x_buffer, x
 

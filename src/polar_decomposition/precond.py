@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 
@@ -23,17 +24,68 @@ class CholStats:
         self.diag_floored += int(diag_floored)
 
 
-def _symmetrize(a: torch.Tensor) -> torch.Tensor:
-    return 0.5 * (a + a.mT)
-
-
 def _default_form_u(dtype: torch.dtype, tf32: bool) -> float:
     if dtype == torch.float32 and tf32 and torch.cuda.is_available():
         return 2.0**-10
     return float(torch.finfo(dtype).eps)
 
 
-def spd_cholesky_solve(
+def _scale_rhs(
+    b: torch.Tensor,
+    s: torch.Tensor,
+    out: Optional[torch.Tensor],
+) -> torch.Tensor:
+    scale = s[:, None]
+    if out is None:
+        return b * scale
+    torch.mul(b, scale, out=out)
+    return out
+
+
+def spd_cholesky_solve_fast(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    stats: CholStats,
+    *,
+    tf32: bool,
+    scaled_jitter_scale: float = 2.0,
+    diag_floor_rel: float = 0.0,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Fast compile-friendly SPD solve for hot paths.
+
+    This path assumes the input is already numerically close to SPD. It avoids
+    Python-side error inspection and retry loops so `torch.compile` can keep the
+    entire region in a single graph. A tiny unconditional diagonal jitter in the
+    scaled space buys robustness without a graph break.
+    """
+    assert a.ndim == 2 and a.shape[0] == a.shape[1]
+    assert b.ndim == 2 and b.shape[0] == a.shape[0]
+
+    diag = a.diagonal()
+    tiny = torch.finfo(a.dtype).tiny
+    mean_diag = torch.mean(diag).clamp_min(tiny)
+    if diag_floor_rel > 0.0:
+        diag_floor = mean_diag * diag_floor_rel
+        diag.clamp_min_(diag_floor)
+
+    s = torch.rsqrt(diag)
+    a.mul_(s[:, None]).mul_(s[None, :])
+
+    jitter = max(scaled_jitter_scale * _default_form_u(a.dtype, tf32), 0.0)
+    if jitter > 0.0:
+        a.diagonal().add_(jitter)
+
+    l = torch.linalg.cholesky(a)
+    rhs = _scale_rhs(b, s, out)
+    torch.cholesky_solve(rhs, l, upper=False, out=rhs)
+    rhs.mul_(s[:, None])
+        
+    stats.update(shifted=jitter > 0.0, retries=0, jitter=jitter, diag_floored=0)
+    return rhs
+
+
+def spd_cholesky_solve_safe(
     a: torch.Tensor,
     b: torch.Tensor,
     stats: CholStats,
@@ -42,54 +94,48 @@ def spd_cholesky_solve(
     diag_floor_rel: float = 1e-6,
     base_shift_scale: float = 2.0,
     max_retries: int = 4,
+    out: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Solve A X = B for symmetric positive definite A using scaled-space Cholesky.
+    """Defensive SPD solve with retries.
 
-    Steps:
-      1. Symmetrize A.
-      2. Lightly floor the diagonal relative to its mean.
-      3. Symmetric unit-diagonal scaling.
-      4. Unshifted cholesky_ex first, then retry in scaled space with geometric jitter.
+    Keep this path for stress testing and numerical debugging. It is intentionally
+    slower than `spd_cholesky_solve_fast` because it pays for Python-side error
+    inspection and retry logic.
     """
     assert a.ndim == 2 and a.shape[0] == a.shape[1]
     assert b.ndim == 2 and b.shape[0] == a.shape[0]
 
-    dtype = a.dtype
-
-    a = _symmetrize(a)
-    diag = torch.diagonal(a)
-    mean_diag = torch.mean(diag).clamp_min_(torch.finfo(dtype).tiny)
-    diag_floor = diag_floor_rel * mean_diag
+    a = 0.5 * (a + a.mT)
+    diag = a.diagonal()
+    tiny = torch.finfo(a.dtype).tiny
+    mean_diag = torch.mean(diag).clamp_min(tiny)
+    diag_floor = mean_diag * diag_floor_rel
     diag.clamp_min_(diag_floor)
 
     s = torch.rsqrt(diag)
     a.mul_(s[:, None]).mul_(s[None, :])
-    h = a
+    rhs = _scale_rhs(b, s, out)
 
-    rhs = s[:, None] * b
-
-    form_u = _default_form_u(dtype, tf32)
-    base_shift = max(base_shift_scale * form_u, 1e-7)
-
+    base_shift = max(base_shift_scale * _default_form_u(a.dtype, tf32), 1e-7)
+    shifted = False
     retries = 0
     jitter = 0.0
-    shifted = False
 
-    l, info = torch.linalg.cholesky_ex(h, check_errors=False)
+    l, info = torch.linalg.cholesky_ex(a, check_errors=False)
     while int(info.item()) != 0 and retries < max_retries:
         shifted = True
         jitter = base_shift * (10.0**retries)
-        h_retry = h.clone()
-        h_retry.diagonal().add_(jitter)
-        l, info = torch.linalg.cholesky_ex(h_retry, check_errors=False)
+        shifted_a = a.clone()
+        shifted_a.diagonal().add_(jitter)
+        l, info = torch.linalg.cholesky_ex(shifted_a, check_errors=False)
         retries += 1
 
     if int(info.item()) != 0:
-        jitter = base_shift * (10.0**retries)
-        h_retry = h.clone()
-        h_retry.diagonal().add_(jitter)
-        l = torch.linalg.cholesky(h_retry)
         shifted = True
+        jitter = base_shift * (10.0**retries)
+        shifted_a = a.clone()
+        shifted_a.diagonal().add_(jitter)
+        l = torch.linalg.cholesky(shifted_a)
         retries += 1
 
     torch.cholesky_solve(rhs, l, upper=False, out=rhs)

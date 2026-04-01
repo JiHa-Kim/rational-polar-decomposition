@@ -8,6 +8,7 @@ import torch
 @dataclass
 class PolarResult:
     """Unified return type for all polar decomposition methods."""
+
     q: torch.Tensor
     stats: CholStats = field(default_factory=lambda: CholStats())
 
@@ -36,9 +37,7 @@ def _form_u(dtype: torch.dtype, tf32: bool) -> float:
     return float(torch.finfo(dtype).eps)
 
 
-def _scale_and_symmetrize(
-    a: torch.Tensor, diag_floor_rel: float
-) -> torch.Tensor:
+def _scale_and_symmetrize(a: torch.Tensor, diag_floor_rel: float) -> torch.Tensor:
     """Unit-diagonal scaling + exact symmetrization. Returns scale vector."""
     diag = a.diagonal()
     if diag_floor_rel > 0.0:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from .precond import CholStats, PolarResult, spd_inverse_fast, spd_inverse_safe
+from .triton_ops import affine_diag, can_affine_diag
 
 
 def dwh_coefficients(ell: float) -> tuple[float, float, float, float]:
@@ -61,9 +62,12 @@ def dwh2(
         beta = aa - alpha
 
         # Form (I + c*G) in buf, keeping gram intact.
-        buf.copy_(gram)
-        buf.mul_(cc)
-        buf.diagonal().add_(1.0)
+        if can_affine_diag(gram, buf):
+            affine_diag(gram, buf, alpha=cc, diag_add=1.0)
+        else:
+            buf.copy_(gram)
+            buf.mul_(cc)
+            buf.diagonal().add_(1.0)
 
         if robust:
             spd_inverse_safe(
@@ -92,8 +96,11 @@ def dwh2(
                 )
 
         # M_k = alpha*I + beta*inv  (reuse inv buffer)
-        inv.mul_(beta)
-        inv.diagonal().add_(alpha)
+        if can_affine_diag(inv, inv):
+            affine_diag(inv, inv, alpha=beta, diag_add=alpha)
+        else:
+            inv.mul_(beta)
+            inv.diagonal().add_(alpha)
 
         # Large matmul: rectangular update
         x = x @ inv

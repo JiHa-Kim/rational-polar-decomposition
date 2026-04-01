@@ -119,20 +119,20 @@ def _apply_block(
         torch.neg(y, out=e)
         e.diagonal().add_(1.0)
         torch.mm(e, e, out=e2)
-        
+
         torch.mul(e2, h2, out=h)
         h.add_(e, alpha=h1)
         h.diagonal().add_(h0)
-        
+
         if symmetrize_inputs:
             h = _symmetrize(h)
 
         torch.mm(q, h, out=q_new)
         q, q_new = q_new, q
-        
+
         torch.mm(y, h, out=temp)
         torch.mm(temp, h, out=y)
-        
+
         if symmetrize_inputs:
             y = _symmetrize(y)
 

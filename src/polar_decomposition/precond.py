@@ -29,8 +29,6 @@ def _default_form_u(dtype: torch.dtype, tf32: bool) -> float:
     return float(torch.finfo(dtype).eps)
 
 
-
-
 def spd_cholesky_solve_fast(
     a: torch.Tensor,
     b: torch.Tensor,

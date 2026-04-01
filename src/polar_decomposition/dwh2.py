@@ -30,7 +30,9 @@ def dwh_coefficients(ell: float) -> Tuple[float, float, float, float]:
     return a, b, c, ell_next
 
 
-def _dwh_schedule(ell0: float, steps: int = 2) -> Tuple[List[Tuple[float, float, float]], float]:
+def _dwh_schedule(
+    ell0: float, steps: int = 2
+) -> Tuple[List[Tuple[float, float, float]], float]:
     coeffs: List[Tuple[float, float, float]] = []
     ell = float(ell0)
     for _ in range(steps):

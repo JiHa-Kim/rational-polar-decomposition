@@ -98,6 +98,7 @@ def _eval_h_centered(
 
 def _apply_block(
     x: torch.Tensor,
+    out: torch.Tensor,
     coeffs: Sequence[Tuple[float, float, float]],
     *,
     first_block: bool,
@@ -106,9 +107,9 @@ def _apply_block(
     n = x.shape[1]
     eye = torch.eye(n, device=x.device, dtype=x.dtype)
     y = x.mT @ x
-    y = 0.5 * (y + y.mT)
+    y.add_(y.mT.clone()).mul_(0.5)
     if first_block and first_gram_jitter:
-        y = y + first_gram_jitter * eye
+        y.diagonal().add_(first_gram_jitter)
 
     q = eye
     for coeff in coeffs:
@@ -116,8 +117,8 @@ def _apply_block(
         q = q @ h
         yh = y @ h
         y = yh @ h
-        y = 0.5 * (y + y.mT)
-    return x @ q
+        y.add_(y.mT.clone()).mul_(0.5)
+    return torch.mm(x, q, out=out)
 
 
 def pe5(
@@ -136,17 +137,19 @@ def pe5(
     """
     assert a.ndim == 2
     transposed = False
-    x = a
+    x = a.clone()
     if x.shape[0] < x.shape[1]:
         x = x.mT.contiguous()
         transposed = True
 
     coeffs = list(coeffs or pe5_coefficients(ell0=ell0, steps=5))
+    x_buffer = torch.empty_like(x)
     for i in range(0, len(coeffs), restart_interval):
         block = coeffs[i : i + restart_interval]
-        x = _apply_block(
-            x, block, first_block=(i == 0), first_gram_jitter=first_gram_jitter
+        x_buffer = _apply_block(
+            x, x_buffer, block, first_block=(i == 0), first_gram_jitter=first_gram_jitter
         )
+        x, x_buffer = x_buffer, x
 
     if transposed:
         x = x.mT.contiguous()

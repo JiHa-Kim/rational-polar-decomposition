@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 
 import torch
 
+from .triton_ops import can_fuse_scale_symmetrize, scale_symmetrize
+
 
 @dataclass
 class PolarResult:
@@ -46,7 +48,8 @@ def _scale_and_symmetrize(
     diag_floor_rel: float,
     *,
     scratch: torch.Tensor,
-) -> tuple[torch.Tensor, int]:
+    use_triton: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
     """Unit-diagonal scaling + exact symmetrization."""
     diag = a.diagonal()
     diag_floored = 0
@@ -56,10 +59,12 @@ def _scale_and_symmetrize(
         diag_floored = int(torch.count_nonzero(diag < floor).item())
         diag.clamp_min_(floor)
     s = torch.rsqrt(diag)
+    if use_triton and can_fuse_scale_symmetrize(a, scratch):
+        return scale_symmetrize(a, s, scratch), s, diag_floored
     a.mul_(s[:, None]).mul_(s[None, :])
     scratch.copy_(a.mT)
     a.add_(scratch).mul_(0.5)
-    return s, diag_floored
+    return a, s, diag_floored
 
 
 def _inverse_from_cholesky(
@@ -94,16 +99,16 @@ def spd_inverse_fast(
     """Compile-friendly SPD inverse with unconditional jitter."""
     n = a.shape[0]
     scratch = _scratch_like(a, out)
-    s, diag_floored = _scale_and_symmetrize(a, diag_floor_rel, scratch=scratch)
+    mat, s, diag_floored = _scale_and_symmetrize(a, diag_floor_rel, scratch=scratch)
 
     # Scale jitter by matrix dimension — O(n*eps) is the expected
     # rounding error in the Gram product for n-wide inner products.
     u = _form_u(a.dtype)
     jitter = max(scaled_jitter_scale * n * u, 0.0)
     if jitter > 0.0:
-        a.diagonal().add_(jitter)
+        mat.diagonal().add_(jitter)
 
-    l = torch.linalg.cholesky(a)
+    l = torch.linalg.cholesky(mat)
     inv_a = _inverse_from_cholesky(l, out=out)
     inv_a.mul_(s[:, None]).mul_(s[None, :])
 
@@ -128,18 +133,23 @@ def spd_inverse_safe(
     """Defensive SPD inverse with retries for stress testing."""
     n = a.shape[0]
     scratch = _scratch_like(a, out)
-    s, diag_floored = _scale_and_symmetrize(a, diag_floor_rel, scratch=scratch)
+    mat, s, diag_floored = _scale_and_symmetrize(
+        a,
+        diag_floor_rel,
+        scratch=scratch,
+        use_triton=False,
+    )
 
     base_shift = max(base_shift_scale * n * _form_u(a.dtype), 1e-7)
     shifted = False
     retries = 0
     jitter = 0.0
 
-    l, info = torch.linalg.cholesky_ex(a, check_errors=False)
+    l, info = torch.linalg.cholesky_ex(mat, check_errors=False)
     while int(info.item()) != 0 and retries < max_retries:
         shifted = True
         jitter = base_shift * (10.0**retries)
-        scratch.copy_(a)
+        scratch.copy_(mat)
         scratch.diagonal().add_(jitter)
         l, info = torch.linalg.cholesky_ex(scratch, check_errors=False)
         retries += 1
@@ -147,7 +157,7 @@ def spd_inverse_safe(
     if int(info.item()) != 0:
         shifted = True
         jitter = base_shift * (10.0**retries)
-        scratch.copy_(a)
+        scratch.copy_(mat)
         scratch.diagonal().add_(jitter)
         l = torch.linalg.cholesky(scratch)
         retries += 1

@@ -60,16 +60,10 @@ def spd_cholesky_solve(
     diag = torch.diagonal(a)
     mean_diag = torch.mean(diag).clamp_min_(torch.finfo(dtype).tiny)
     diag_floor = diag_floor_rel * mean_diag
-    
-    # We remove .item() and branching to avoid dynamo graph breaks.
-    # We still track whether ANY were floored for stats.
     diag.clamp_min_(diag_floor)
 
     s = torch.rsqrt(diag)
     a.mul_(s[:, None]).mul_(s[None, :])
-    # a is already symmetric earlier, except for float precision noise.
-    # torch.linalg.cholesky_ex(upper=False) only reads the lower triangle anyway,
-    # so we don't need to symmetrically re-average it! HUGE memory savings!
     h = a
 
     rhs = s[:, None] * b
@@ -98,8 +92,7 @@ def spd_cholesky_solve(
         shifted = True
         retries += 1
 
-    x = torch.cholesky_solve(rhs, l, upper=False)
-    x.mul_(s[:, None])
-    # We pass 0 to diag_floored to avoid an expensive .item() synchronization for the stats.
+    torch.cholesky_solve(rhs, l, upper=False, out=rhs)
+    rhs.mul_(s[:, None])
     stats.update(shifted=shifted, retries=retries, jitter=jitter, diag_floored=0)
-    return x
+    return rhs

@@ -36,18 +36,33 @@ def _form_u(dtype: torch.dtype, tf32: bool) -> float:
     return float(torch.finfo(dtype).eps)
 
 
-def _scale_and_symmetrize(a: torch.Tensor, diag_floor_rel: float) -> torch.Tensor:
-    """Unit-diagonal scaling + exact symmetrization. Returns scale vector."""
+def _scratch_like(
+    a: torch.Tensor, out: torch.Tensor | None = None
+) -> torch.Tensor:
+    if out is None or out.data_ptr() == a.data_ptr():
+        return torch.empty_like(a)
+    return out
+
+
+def _scale_and_symmetrize(
+    a: torch.Tensor,
+    diag_floor_rel: float,
+    *,
+    scratch: torch.Tensor,
+) -> tuple[torch.Tensor, int]:
+    """Unit-diagonal scaling + exact symmetrization."""
     diag = a.diagonal()
+    diag_floored = 0
     if diag_floor_rel > 0.0:
         tiny = torch.finfo(a.dtype).tiny
         floor = torch.mean(diag.abs()).clamp_min(tiny) * diag_floor_rel
+        diag_floored = int(torch.count_nonzero(diag < floor).item())
         diag.clamp_min_(floor)
     s = torch.rsqrt(diag)
     a.mul_(s[:, None]).mul_(s[None, :])
-    # Two sequential in-place muls can break symmetry; force it back.
-    a = 0.5 * (a + a.mT)
-    return a, s
+    scratch.copy_(a.mT)
+    a.add_(scratch).mul_(0.5)
+    return s, diag_floored
 
 
 def spd_inverse_fast(
@@ -61,7 +76,8 @@ def spd_inverse_fast(
 ) -> torch.Tensor:
     """Compile-friendly SPD inverse with unconditional jitter."""
     n = a.shape[0]
-    a, s = _scale_and_symmetrize(a, diag_floor_rel)
+    scratch = _scratch_like(a, out)
+    s, diag_floored = _scale_and_symmetrize(a, diag_floor_rel, scratch=scratch)
 
     # Scale jitter by matrix dimension — O(n*eps) is the expected
     # rounding error in the Gram product for n-wide inner products.
@@ -74,7 +90,12 @@ def spd_inverse_fast(
     inv_a = torch.cholesky_inverse(l, upper=False, out=out)
     inv_a.mul_(s[:, None]).mul_(s[None, :])
 
-    stats.update(shifted=jitter > 0.0, retries=0, jitter=jitter, diag_floored=0)
+    stats.update(
+        shifted=jitter > 0.0,
+        retries=0,
+        jitter=jitter,
+        diag_floored=diag_floored,
+    )
     return inv_a
 
 
@@ -90,33 +111,38 @@ def spd_inverse_safe(
 ) -> torch.Tensor:
     """Defensive SPD inverse with retries for stress testing."""
     n = a.shape[0]
-    a, s = _scale_and_symmetrize(a, diag_floor_rel)
+    scratch = _scratch_like(a, out)
+    s, diag_floored = _scale_and_symmetrize(a, diag_floor_rel, scratch=scratch)
 
     base_shift = max(base_shift_scale * n * _form_u(a.dtype, tf32), 1e-7)
     shifted = False
     retries = 0
     jitter = 0.0
-    shifted_a = torch.empty_like(a)
 
     l, info = torch.linalg.cholesky_ex(a, check_errors=False)
     while int(info.item()) != 0 and retries < max_retries:
         shifted = True
         jitter = base_shift * (10.0**retries)
-        shifted_a.copy_(a)
-        shifted_a.diagonal().add_(jitter)
-        l, info = torch.linalg.cholesky_ex(shifted_a, check_errors=False)
+        scratch.copy_(a)
+        scratch.diagonal().add_(jitter)
+        l, info = torch.linalg.cholesky_ex(scratch, check_errors=False)
         retries += 1
 
     if int(info.item()) != 0:
         shifted = True
         jitter = base_shift * (10.0**retries)
-        shifted_a.copy_(a)
-        shifted_a.diagonal().add_(jitter)
-        l = torch.linalg.cholesky(shifted_a)
+        scratch.copy_(a)
+        scratch.diagonal().add_(jitter)
+        l = torch.linalg.cholesky(scratch)
         retries += 1
 
     inv_a = torch.cholesky_inverse(l, upper=False, out=out)
     inv_a.mul_(s[:, None]).mul_(s[None, :])
 
-    stats.update(shifted=shifted, retries=retries, jitter=jitter, diag_floored=0)
+    stats.update(
+        shifted=shifted,
+        retries=retries,
+        jitter=jitter,
+        diag_floored=diag_floored,
+    )
     return inv_a

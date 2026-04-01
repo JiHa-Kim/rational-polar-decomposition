@@ -164,9 +164,10 @@ def polar_reference(
     g = 0.5 * (g + g.mT)
     evals, evecs = torch.linalg.eigh(g)
     cutoff = float(torch.finfo(dtype).eps) * max(float(evals.max().item()), 1.0)
-    evals = evals.clamp_min(cutoff)
-    inv_sqrt = (evecs * torch.rsqrt(evals)[None, :]) @ evecs.mT
-    opt_obj = float(torch.sum(inv_sqrt * g).item())
+    safe_evals = evals.clamp_min(cutoff)
+    inv_scale = torch.rsqrt(safe_evals)
+    inv_sqrt = (evecs * inv_scale[None, :]) @ evecs.mT
+    opt_obj = float(torch.sum(evals * inv_scale).item())
     return ReferencePolar(
         inv_sqrt=inv_sqrt,
         objective=opt_obj,
@@ -274,10 +275,10 @@ def summarize(
     audit_chunk_rows: int,
 ) -> Record:
     n = q.shape[1]
-    eye = torch.eye(n, device=q.device, dtype=q.dtype)
     gram = q.mT @ q
+    gram.diagonal().sub_(1.0)
     ortho_fro = float(
-        torch.linalg.matrix_norm(gram - eye, ord="fro").item() / math.sqrt(n)
+        torch.linalg.matrix_norm(gram, ord="fro").item() / math.sqrt(n)
     )
     q_fro_error = None
     objective_ratio = None

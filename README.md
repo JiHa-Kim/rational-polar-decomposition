@@ -133,6 +133,38 @@ The benchmark logs:
 
 Reference quality evaluation is optional and is computed only from the matrix itself via a float64 eigendecomposition of `A^T A`.
 
+## Results
+
+Typical benchmark results on a modern GPU (16384 x 4096, CUDA, TF32):
+
+| Case | Method | Runtime (ms) | Ortho Error (Fro) | Cholesky Shifts |
+| :--- | :--- | :--- | :--- | :--- |
+| **Gaussian** | DWH2 | 589.6 | 0.0553 | 2 |
+| | PE5 | 1130.0 | 0.1780 | 0 |
+| **Lognormal Cols** | DWH2 | 590.2 | 0.3654 | 2 |
+| | PE5 | 1133.4 | 0.4664 | 0 |
+| **AR1 Cols** | DWH2 | 591.0 | 0.1936 | 2 |
+| | PE5 | 1129.2 | 0.3915 | 0 |
+| **Duplicate Cols (Stress)** | DWH2 | 594.0 | 0.8835 | 2 |
+| | PE5 | 1139.0 | 1.0969 | 0 |
+| **Low-rank Noise (Stress)** | DWH2 | 593.9 | 0.9890 | 2 |
+| | PE5 | 1142.2 | 1.0183 | 0 |
+| **Ill-conditioned** | DWH2 | 594.9 | 0.7770 | 2 |
+| | PE5 | 1146.8 | 0.8032 | 0 |
+| **Heavy-tail T** | DWH2 | 596.6 | 0.0410 | 2 |
+| | PE5 | 1149.2 | 0.1747 | 0 |
+| **Sparse-like** | DWH2 | 581.4 | 0.0552 | 2 |
+| | PE5 | 1134.5 | 0.1781 | 0 |
+| **Orthogonal Noisy** | DWH2 | 598.0 | 0.0623 | 2 |
+| | PE5 | 1151.9 | 0.0860 | 0 |
+| **Rank-1 Heavy** | DWH2 | 593.4 | 0.9999 | 2 |
+| | PE5 | 1140.5 | 0.9999 | 0 |
+| **Adversarial** | DWH2 | 601.8 | 0.1387 | 2 |
+| | PE5 | 1157.3 | 0.2353 | 0 |
+
+> [!NOTE]
+> DWH2 is roughly **2x faster** than PE5 on tall matrices due to the small-side accumulation reformulating 4 large matmuls into 2. It also retains better orthogonality.
+
 ## Run
 
 Default run:

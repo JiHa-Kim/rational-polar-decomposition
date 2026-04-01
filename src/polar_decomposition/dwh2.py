@@ -4,8 +4,11 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
+import torch._dynamo
 
 from .precond import CholStats, spd_cholesky_solve
+
+torch._dynamo.config.capture_scalar_outputs = True
 
 
 @dataclass
@@ -64,7 +67,7 @@ def dwh2(
         alpha = bb / cc
         beta = aa - alpha
         solved_t = spd_cholesky_solve(s, x.mT, stats, tf32=tf32)
-        x = alpha * x + beta * solved_t.mT
+        x.mul_(alpha).add_(solved_t.mT, alpha=beta)
 
     if transposed:
         x = x.mT.contiguous()

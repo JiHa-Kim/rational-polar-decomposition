@@ -6,7 +6,8 @@ import math
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Callable, Optional
 
 import torch
 
@@ -49,7 +50,7 @@ def set_fast_matmul(tf32: bool) -> None:
 
 
 def _randn(
-    shape: Tuple[int, ...],
+    shape: tuple[int, ...],
     *,
     device: torch.device,
     seed: int,
@@ -144,7 +145,7 @@ def normalize_fro(a: torch.Tensor) -> torch.Tensor:
 
 def polar_reference(
     a: torch.Tensor, dtype: torch.dtype = torch.float32
-) -> Tuple[torch.Tensor, float]:
+) -> tuple[torch.Tensor, float]:
     transposed = False
     x = a
     if x.shape[0] < x.shape[1]:
@@ -166,11 +167,11 @@ def polar_reference(
 
 def measure(
     fn: Callable[[], object], trials: int, warmup: int
-) -> Tuple[object, List[float]]:
+) -> tuple[object, list[float]]:
     out = None
     for _ in range(warmup):
         out = fn()
-    times: List[float] = []
+    times: list[float] = []
     if torch.cuda.is_available():
         probe = out.q if hasattr(out, "q") else out
         if isinstance(probe, torch.Tensor) and probe.is_cuda:
@@ -362,7 +363,7 @@ def main() -> None:
                 if is_stress and case_ell0 != args.ell0:
                     case_coeffs = pe5_coefficients(ell0=case_ell0, steps=5)
 
-                methods: Dict[str, Callable[[], object]] = {
+                methods: dict[str, Callable[[], object]] = {
                     "dwh2": lambda a=case.a, ell=case_ell0: dwh2_fn(
                         a, ell0=ell, tf32=args.tf32
                     ),

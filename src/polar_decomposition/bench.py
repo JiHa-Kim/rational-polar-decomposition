@@ -42,6 +42,7 @@ def set_fast_matmul(tf32: bool) -> None:
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = tf32
         torch.backends.cudnn.allow_tf32 = tf32
+        torch.backends.cudnn.benchmark = True
     torch.set_float32_matmul_precision("high" if tf32 else "highest")
 
 
@@ -89,6 +90,44 @@ def make_case(
         v = _randn((r, n), device=device, seed=seed + 1)
         noise = 1e-3 * _randn((m, n), device=device, seed=seed + 2)
         a = u @ v + noise
+    elif name == "ill_conditioned":
+        # Systematically decaying singular values via fast column scaling and mixing
+        x = _randn((m, n), device=device, seed=seed)
+        v = _randn((n, n), device=device, seed=seed + 1)
+        v = torch.linalg.qr(v)[0]  # qr on much smaller nxn
+        s = torch.logspace(0, -6, steps=n, device=device, dtype=x.dtype)
+        a = (x * s[None, :]) @ v
+    elif name == "heavy_tail_t":
+        # Student-t distribution with 2 degress of freedom (heavy tails/outliers)
+        z = _randn((m, n), device=device, seed=seed)
+        chi2 = _randn((m, n), device=device, seed=seed + 1)**2 + _randn((m, n), device=device, seed=seed + 2)**2
+        a = z / torch.sqrt(chi2 / 2.0).clamp_min(1e-4)
+    elif name == "sparse_like":
+        # 95% sparsity pseudo-sparse matrix
+        base = _randn((m, n), device=device, seed=seed)
+        g = torch.Generator(device=device)
+        g.manual_seed(seed + 1)
+        mask = torch.rand((m, n), device=device, generator=g) > 0.95
+        a = base * mask.float()
+    elif name == "orthogonal_noisy":
+        # Nearly orthogonal columns (tall skiny identity-like)
+        n_min = min(m, n)
+        a = torch.zeros((m, n), device=device, dtype=torch.float32)
+        a[:n_min, :n_min] = torch.eye(n_min, device=device, dtype=torch.float32)
+        noise = 1e-4 * _randn((m, n), device=device, seed=seed + 1)
+        a = a + noise
+    elif name == "rank_1_heavy":
+        # Extreme low-rank + some noise
+        u = _randn((m, 1), device=device, seed=seed)
+        v = _randn((1, n), device=device, seed=seed + 1)
+        noise = 1e-6 * _randn((m, n), device=device, seed=seed + 2)
+        a = u @ v + noise
+    elif name == "adversarial_condition":
+        # Exact condition number bound via SVD on small random matrix + mixing
+        x = _randn((m, n), device=device, seed=seed)
+        v = torch.linalg.qr(_randn((n, n), device=device, seed=seed + 1))[0]
+        s = torch.linspace(1.0, 1e-7, steps=n, device=device, dtype=x.dtype)
+        a = (x * s[None, :]) @ v
     else:
         raise ValueError(f"unknown case {name}")
     return Case(name=name, a=a)
@@ -208,6 +247,7 @@ def main() -> None:
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--tf32", action="store_true")
+    parser.add_argument("--compile", action="store_true", help="Compile the algorithmic kernels with torch.compile")
     parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
     parser.add_argument(
         "--no-reference",
@@ -223,6 +263,12 @@ def main() -> None:
             "ar1_cols",
             "duplicate_cols",
             "lowrank_noise",
+            "ill_conditioned",
+            "heavy_tail_t",
+            "sparse_like",
+            "orthogonal_noisy",
+            "rank_1_heavy",
+            "adversarial_condition",
         ],
     )
     parser.add_argument("--methods", nargs="+", default=["dwh2", "pe5"])
@@ -239,8 +285,16 @@ def main() -> None:
     out_f = line_writer(args.output)
 
     try:
-        with torch.inference_mode():
+        with torch.no_grad():
             coeffs = pe5_coefficients(ell0=args.ell0, steps=5)
+
+            dwh2_fn = dwh2
+            pe5_fn = pe5
+            if args.compile:
+                # Compile main kernels, using fullgraph=False as Cholesky error checks cause harmless Python syncs
+                dwh2_fn = torch.compile(dwh2, mode="max-autotune") # type: ignore
+                pe5_fn = torch.compile(pe5, mode="max-autotune") # type: ignore
+
             for i, case_name in enumerate(args.cases):
                 case = make_case(
                     case_name,
@@ -258,8 +312,8 @@ def main() -> None:
                     ref_q, ref_obj = polar_reference(case.a)
 
                 methods: Dict[str, Callable[[], object]] = {
-                    "dwh2": lambda a=case.a: dwh2(a, ell0=args.ell0, tf32=args.tf32),
-                    "pe5": lambda a=case.a, coeffs=coeffs: pe5(
+                    "dwh2": lambda a=case.a: dwh2_fn(a, ell0=args.ell0, tf32=args.tf32),
+                    "pe5": lambda a=case.a, coeffs=coeffs: pe5_fn(
                         a, ell0=args.ell0, coeffs=coeffs
                     ),
                 }

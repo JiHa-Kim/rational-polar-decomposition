@@ -29,9 +29,8 @@ def _default_form_u(dtype: torch.dtype, tf32: bool) -> float:
     return float(torch.finfo(dtype).eps)
 
 
-def spd_cholesky_solve_fast(
+def spd_inverse_fast(
     a: torch.Tensor,
-    b: torch.Tensor,
     stats: CholStats,
     *,
     tf32: bool,
@@ -63,18 +62,15 @@ def spd_cholesky_solve_fast(
         a.diagonal().add_(jitter)
 
     l = torch.linalg.cholesky(a)
-    inv_a = torch.cholesky_inverse(l, upper=False)
+    inv_a = torch.cholesky_inverse(l, upper=False, out=out)
 
     inv_a.mul_(s[:, None]).mul_(s[None, :])
-    rhs = torch.mm(inv_a, b, out=out)
-
     stats.update(shifted=jitter > 0.0, retries=0, jitter=jitter, diag_floored=0)
-    return rhs
+    return inv_a
 
 
-def spd_cholesky_solve_safe(
+def spd_inverse_safe(
     a: torch.Tensor,
-    b: torch.Tensor,
     stats: CholStats,
     *,
     tf32: bool,
@@ -123,10 +119,8 @@ def spd_cholesky_solve_safe(
         l = torch.linalg.cholesky(shifted_a)
         retries += 1
 
-    inv_a = torch.cholesky_inverse(l, upper=False)
+    inv_a = torch.cholesky_inverse(l, upper=False, out=out)
     inv_a.mul_(s[:, None]).mul_(s[None, :])
 
-    rhs = torch.mm(inv_a, b, out=out)
-
     stats.update(shifted=shifted, retries=retries, jitter=jitter, diag_floored=0)
-    return rhs
+    return inv_a

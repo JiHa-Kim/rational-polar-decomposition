@@ -147,17 +147,17 @@ The audit path is intentionally low-memory. Instead of forming a tall float64 SV
 Fresh current-`HEAD` benchmark on this machine:
 
 - benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_current_serial_20260401.jsonl`
-- shape: `16384 x 4096`
+- shape: 16384 x 4096
 - cases: 11 default cases
-- measurement: `warmup=1`, `trials=3`
+- measurement: warmup=1, trials=3
 - execution policy: one benchmark job at a time; no overlapping runs
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **`391.05 ms`** | **`0.06084`** | **`0.19371`** |
-| `pe5` | `664.96 ms` | `0.09083` | `0.39122` |
+| `dwh2` | **391.05 ms** | **0.06084** | **0.19371** |
+| `pe5` | 664.96 ms | 0.09083 | 0.39122 |
 
-`dwh2` is `1.70x` faster by median runtime and lower on `q_fro_error` in `10/11` cases.
+`dwh2` is 1.70x faster by median runtime and lower on `q_fro_error` in 10/11 cases.
 
 `q_fro_error` is the main quality metric for the raw approximate factor. Raw
 `objective_ratio` is also logged, but it is not a projected metric; use `--audit`
@@ -165,33 +165,33 @@ if you want the projected-objective comparison.
 
 | Case | DWH2 ms | PE5 ms | Speedup | DWH2 `q_fro_error` | PE5 `q_fro_error` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `adversarial_condition` | **`397.96`** | `674.79` | `1.70x` | **`0.06084`** | `0.12410` |
-| `ar1_cols` | **`388.40`** | `656.94` | `1.69x` | **`0.10790`** | `0.23701` |
-| `duplicate_cols` | **`390.79`** | `663.66` | `1.70x` | `0.24178` | **`0.19284`** |
-| `gaussian` | **`390.77`** | `658.84` | `1.69x` | **`0.02810`** | `0.08953` |
-| `heavy_tail_t` | **`393.73`** | `670.08` | `1.70x` | **`0.02758`** | `0.09026` |
-| `ill_conditioned` | **`393.92`** | `668.50` | `1.70x` | **`0.12110`** | `0.19181` |
-| `lognormal_cols` | **`388.83`** | `661.04` | `1.70x` | **`0.15298`** | `0.25366` |
-| `lowrank_noise` | **`391.05`** | `664.96` | `1.70x` | **`0.07714`** | `0.09083` |
-| `orthogonal_noisy` | **`396.85`** | `671.16` | `1.69x` | **`0.03179`** | `0.04190` |
-| `rank_1_heavy` | **`395.25`** | `672.54` | `1.70x` | **`0.01331`** | `0.01443` |
-| `sparse_like` | **`388.20`** | `662.47` | `1.71x` | **`0.02801`** | `0.08958` |
+| `adversarial_condition` | **397.96** | 674.79 | 1.70x | **0.06084** | 0.12410 |
+| `ar1_cols` | **388.40** | 656.94 | 1.69x | **0.10790** | 0.23701 |
+| `duplicate_cols` | **390.79** | 663.66 | 1.70x | 0.24178 | **0.19284** |
+| `gaussian` | **390.77** | 658.84 | 1.69x | **0.02810** | 0.08953 |
+| `heavy_tail_t` | **393.73** | 670.08 | 1.70x | **0.02758** | 0.09026 |
+| `ill_conditioned` | **393.92** | 668.50 | 1.70x | **0.12110** | 0.19181 |
+| `lognormal_cols` | **388.83** | 661.04 | 1.70x | **0.15298** | 0.25366 |
+| `lowrank_noise` | **391.05** | 664.96 | 1.70x | **0.07714** | 0.09083 |
+| `orthogonal_noisy` | **396.85** | 671.16 | 1.69x | **0.03179** | 0.04190 |
+| `rank_1_heavy` | **395.25** | 672.54 | 1.70x | **0.01331** | 0.01443 |
+| `sparse_like` | **388.20** | 662.47 | 1.71x | **0.02801** | 0.08958 |
 
-Fresh current-`HEAD` DWH2 profile on the same `16384 x 4096` Gaussian case:
+Fresh current-`HEAD` DWH2 profile on the same 16384 x 4096 Gaussian case:
 
 - profile basis: eager mode, 1 warm-up call, 3 profiled iterations
-- timed median from the same run: `388.28 ms`
+- timed median from the same run: 388.28 ms
 - grouping rule: `aten::mm` split by input shape into tall rectangular GEMMs vs small-side square GEMMs
 - table values below are aggregate self CUDA time across the 3 profiled iterations
 
 | DWH2 Hot Path Bucket | Self CUDA Time | Share |
 | --- | ---: | ---: |
-| **Rectangular GEMM** | **`879.32 ms`** | **`76.09%`** |
-| Small-side square GEMM | `153.52 ms` | `13.29%` |
-| Cholesky | `92.08 ms` | `7.97%` |
-| Triangular solve | `15.32 ms` | `1.33%` |
-| Triton affine kernel | `8.84 ms` | `0.76%` |
-| Triton scale/sym kernel | `6.50 ms` | `0.56%` |
+| **Rectangular GEMM** | **879.32 ms** | **76.09%** |
+| Small-side square GEMM | 153.52 ms | 13.29% |
+| Cholesky | 92.08 ms | 7.97% |
+| Triangular solve | 15.32 ms | 1.33% |
+| Triton affine kernel | 8.84 ms | 0.76% |
+| Triton scale/sym kernel | 6.50 ms | 0.56% |
 
 ## Run
 

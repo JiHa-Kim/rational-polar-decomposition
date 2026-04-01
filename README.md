@@ -21,29 +21,29 @@ This repo intentionally avoids oracle inputs such as known singular values.
 
 We use the DWH scalar schedule from Nakatsukasa, Bai, and Gygi,
 
-\[
+$$
 a_k = h(\ell_k),\qquad
 b_k = \frac{(a_k - 1)^2}{4},\qquad
 c_k = a_k + b_k - 1,
-\]
+$$
 
 with
 
-\[
+$$
 \ell_{k+1} = \ell_k \frac{a_k + b_k \ell_k^2}{1 + c_k \ell_k^2}.
-\]
+$$
 
 The matrix update is
 
-\[
+$$
 X_{k+1} = X_k (a_k I + b_k X_k^\top X_k)(I + c_k X_k^\top X_k)^{-1}.
-\]
+$$
 
 The implementation uses the exact affine-resolvent identity
 
-\[
+$$
 (aI + bG)(I + cG)^{-1} = \frac{b}{c} I + \left(a - \frac{b}{c}\right)(I + cG)^{-1},
-\]
+$$
 
 which saves a large matrix multiply per step.
 
@@ -57,9 +57,9 @@ We use the Polar Express offline degree-5 coefficient generator with:
 
 The online method is the fast rectangular small-side formulation. For a polynomial
 
-\[
+$$
 p(x) = x(a + b x^2 + c x^4),
-\]
+$$
 
 we apply it through the small-side Gram `Y = X^T X`, maintaining a small-side factor `Q` so that the large matrix is only multiplied at the end of each restart block.
 
@@ -71,15 +71,15 @@ The methods do not inspect singular values.
 
 All inputs are normalized by
 
-\[
+$$
 X_0 = \frac{A}{\|A\|_F + 10^{-3}}.
-\]
+$$
 
 Both methods use the same fixed design lower bound
 
-\[
+$$
 \ell_0 = 10^{-3}
-\]
+$$
 
 by default. This is a design parameter, not an oracle estimate.
 

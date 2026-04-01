@@ -83,11 +83,17 @@ def make_case(
     elif name == "ar1_cols":
         rho = 0.995
         x = _randn((m, n), device=device, seed=seed)
-        a = torch.empty_like(x)
-        a[:, 0] = x[:, 0]
         coeff = math.sqrt(max(1.0 - rho * rho, 0.0))
-        for j in range(1, n):
-            a[:, j] = rho * a[:, j - 1] + coeff * x[:, j]
+        # Vectorize the AR(1) column recurrence via a scaled prefix sum.
+        powers = torch.pow(
+            torch.tensor(rho, device=device, dtype=x.dtype),
+            torch.arange(n, device=device, dtype=x.dtype),
+        )
+        scale = torch.full((n,), coeff, device=device, dtype=x.dtype)
+        scale[0] = 1.0
+        scale[1:] /= powers[1:]
+        a = torch.cumsum(x * scale[None, :], dim=1)
+        a.mul_(powers[None, :])
     elif name == "duplicate_cols":
         k = max(64, n // 16)
         base = _randn((m, k), device=device, seed=seed)
@@ -111,11 +117,12 @@ def make_case(
     elif name == "heavy_tail_t":
         # Student-t distribution with 2 degress of freedom (heavy tails/outliers)
         z = _randn((m, n), device=device, seed=seed)
-        chi2 = (
-            _randn((m, n), device=device, seed=seed + 1) ** 2
-            + _randn((m, n), device=device, seed=seed + 2) ** 2
-        )
-        a = z / torch.sqrt(chi2 / 2.0).clamp_min(1e-4)
+        chi2 = _randn((m, n), device=device, seed=seed + 1)
+        chi2.square_()
+        tail = _randn((m, n), device=device, seed=seed + 2)
+        chi2.addcmul_(tail, tail)
+        chi2.mul_(0.5).clamp_min_(1e-4).sqrt_()
+        a = z / chi2
     elif name == "sparse_like":
         # 95% sparsity pseudo-sparse matrix
         base = _randn((m, n), device=device, seed=seed)
@@ -126,10 +133,8 @@ def make_case(
     elif name == "orthogonal_noisy":
         # Nearly orthogonal columns (tall skiny identity-like)
         n_min = min(m, n)
-        a = torch.zeros((m, n), device=device, dtype=torch.float32)
-        a[:n_min, :n_min] = torch.eye(n_min, device=device, dtype=torch.float32)
-        noise = 1e-4 * _randn((m, n), device=device, seed=seed + 1)
-        a = a + noise
+        a = 1e-4 * _randn((m, n), device=device, seed=seed + 1)
+        a[:n_min, :n_min].diagonal().add_(1.0)
     elif name == "rank_1_heavy":
         # Extreme low-rank + some noise
         u = _randn((m, 1), device=device, seed=seed)

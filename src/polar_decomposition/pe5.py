@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from math import inf, sqrt
-from typing import List, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -16,8 +16,7 @@ PAPER_FIRST_GRAM_JITTER = 0.0
 PAPER_NORM_EPS = 1e-3
 
 
-
-def _optimal_quintic(l: float, u: float = 1.0) -> Tuple[float, float, float]:
+def _optimal_quintic(l: float, u: float = 1.0) -> tuple[float, float, float]:
     assert 0.0 <= l <= u
     if 1.0 - 5e-6 <= l / u:
         return (15.0 / 8.0) / u, (-10.0 / 8.0) / (u**3), (3.0 / 8.0) / (u**5)
@@ -52,10 +51,10 @@ def pe5_coefficients(
     steps: int = 5,
     cushion: float = PAPER_CUSHION,
     safety: float = PAPER_SAFETY,
-) -> List[Tuple[float, float, float]]:
+) -> list[tuple[float, float, float]]:
     l = float(ell0)
     u = 1.0
-    coeffs: List[Tuple[float, float, float]] = []
+    coeffs: list[tuple[float, float, float]] = []
     for _ in range(steps):
         a, b, c = _optimal_quintic(max(l, cushion * u), u)
         pl = a * l + b * l**3 + c * l**5
@@ -80,8 +79,8 @@ def pe5_coefficients(
 
 
 def centered_coefficients(
-    coeffs: Sequence[Tuple[float, float, float]],
-) -> List[Tuple[float, float, float]]:
+    coeffs: Sequence[tuple[float, float, float]],
+) -> list[tuple[float, float, float]]:
     return [(a + b + c, -(b + 2.0 * c), c) for (a, b, c) in coeffs]
 
 
@@ -92,7 +91,7 @@ def _symmetrize(a: torch.Tensor) -> torch.Tensor:
 def _apply_block(
     x: torch.Tensor,
     out: torch.Tensor,
-    coeffs: Sequence[Tuple[float, float, float]],
+    coeffs: Sequence[tuple[float, float, float]],
     *,
     first_block: bool,
     first_gram_jitter: float,
@@ -145,7 +144,7 @@ def pe5(
     *,
     ell0: float = PAPER_MUON_ELL,
     restart_interval: int = 3,
-    coeffs: Sequence[Tuple[float, float, float]] | None = None,
+    coeffs: Sequence[tuple[float, float, float]] | None = None,
     first_gram_jitter: float = PAPER_FIRST_GRAM_JITTER,
     symmetrize_inputs: bool = False,
 ) -> PolarResult:

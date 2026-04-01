@@ -147,7 +147,11 @@ def pe5(
     for i in range(0, len(coeffs), restart_interval):
         block = coeffs[i : i + restart_interval]
         x_buffer = _apply_block(
-            x, x_buffer, block, first_block=(i == 0), first_gram_jitter=first_gram_jitter
+            x,
+            x_buffer,
+            block,
+            first_block=(i == 0),
+            first_gram_jitter=first_gram_jitter,
         )
         x, x_buffer = x_buffer, x
 

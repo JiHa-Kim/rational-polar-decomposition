@@ -39,7 +39,7 @@ def spd_cholesky_solve_fast(
     diag_floor_rel: float = 0.0,
     out: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Fast compile-friendly SPD solve for hot paths.
+    """Fast compile-friendly robust SPD inverse for hot paths.
 
     This path assumes the input is already numerically close to SPD. It avoids
     Python-side error inspection and retry loops so `torch.compile` can keep the
@@ -47,7 +47,6 @@ def spd_cholesky_solve_fast(
     scaled space buys robustness without a graph break.
     """
     assert a.ndim == 2 and a.shape[0] == a.shape[1]
-    assert b.ndim == 2 and b.shape[0] == a.shape[0]
 
     diag = a.diagonal()
     tiny = torch.finfo(a.dtype).tiny
@@ -91,7 +90,6 @@ def spd_cholesky_solve_safe(
     inspection and retry logic.
     """
     assert a.ndim == 2 and a.shape[0] == a.shape[1]
-    assert b.ndim == 2 and b.shape[0] == a.shape[0]
 
     a = 0.5 * (a + a.mT)
     diag = a.diagonal()

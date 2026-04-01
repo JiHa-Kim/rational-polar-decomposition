@@ -5,7 +5,7 @@ from typing import List, Tuple
 
 import torch
 
-from .precond import CholStats, spd_cholesky_solve_fast, spd_cholesky_solve_safe
+from .precond import CholStats, spd_inverse_fast, spd_inverse_safe
 
 
 @dataclass
@@ -67,11 +67,12 @@ def dwh2(
     n = x.shape[1]
     m = x.shape[0]
     gram = torch.empty((n, n), device=x.device, dtype=x.dtype)
-    rhs = torch.empty((n, m), device=x.device, dtype=x.dtype)
+    inv_gram = torch.empty((n, n), device=x.device, dtype=x.dtype)
+    rhs_t = torch.empty((m, n), device=x.device, dtype=x.dtype)
     stats = CholStats()
 
     coeffs, ell_final = _dwh_schedule(ell0=ell0, steps=2)
-    solve = spd_cholesky_solve_safe if robust else spd_cholesky_solve_fast
+    inverse_fn = spd_inverse_safe if robust else spd_inverse_fast
 
     for aa, bb, cc in coeffs:
         torch.mm(x.mT, x, out=gram)
@@ -80,16 +81,16 @@ def dwh2(
 
         alpha = bb / cc
         beta = aa - alpha
-        solved_t = solve(
+        inverse_fn(
             gram,
-            x.mT,
             stats,
             tf32=tf32,
-            out=rhs,
+            out=inv_gram,
             diag_floor_rel=(1e-6 if robust else diag_floor_rel),
             **({"scaled_jitter_scale": scaled_jitter_scale} if not robust else {}),
         )
-        x.mul_(alpha).add_(solved_t.mT, alpha=beta)
+        torch.mm(x, inv_gram, out=rhs_t)
+        x.mul_(alpha).add_(rhs_t, alpha=beta)
 
     if transposed:
         x = x.mT.contiguous()

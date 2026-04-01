@@ -64,6 +64,29 @@ def _scale_and_symmetrize(
     return s, diag_floored
 
 
+def _inverse_from_cholesky(
+    l: torch.Tensor,
+    *,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Form L^{-T} L^{-1} via two triangular solves.
+
+    On this GPU this is materially faster than torch.cholesky_inverse for the
+    4k x 4k SPD blocks used by DWH2, while staying numerically equivalent for
+    benchmark purposes.
+    """
+    inv_a = (
+        torch.empty_like(l)
+        if out is None or out.data_ptr() == l.data_ptr()
+        else out
+    )
+    inv_a.zero_()
+    inv_a.diagonal().fill_(1.0)
+    torch.linalg.solve_triangular(l, inv_a, upper=False, left=True, out=inv_a)
+    torch.linalg.solve_triangular(l.mT, inv_a, upper=True, left=True, out=inv_a)
+    return inv_a
+
+
 def spd_inverse_fast(
     a: torch.Tensor,
     stats: CholStats,
@@ -85,7 +108,7 @@ def spd_inverse_fast(
         a.diagonal().add_(jitter)
 
     l = torch.linalg.cholesky(a)
-    inv_a = torch.cholesky_inverse(l, upper=False, out=out)
+    inv_a = _inverse_from_cholesky(l, out=out)
     inv_a.mul_(s[:, None]).mul_(s[None, :])
 
     stats.update(
@@ -133,7 +156,7 @@ def spd_inverse_safe(
         l = torch.linalg.cholesky(scratch)
         retries += 1
 
-    inv_a = torch.cholesky_inverse(l, upper=False, out=out)
+    inv_a = _inverse_from_cholesky(l, out=out)
     inv_a.mul_(s[:, None]).mul_(s[None, :])
 
     stats.update(

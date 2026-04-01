@@ -11,7 +11,6 @@ from .precond import CholStats, spd_inverse_fast, spd_inverse_safe
 @dataclass
 class DWH2Result:
     q: torch.Tensor
-    ell_final: float
     stats: CholStats
 
 
@@ -50,12 +49,15 @@ def dwh2(
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,
 ) -> DWH2Result:
-    """Two-step direct DWH iteration optimized for repeated GPU execution.
+    """Two-step DWH via small-side accumulation.
 
-    Main changes versus the baseline:
-      * small-side Gram is written into a persistent buffer via `out=`
-      * the hot solve path is branch-free and compile-friendly by default
-      * no Python scalar syncs in the default path
+    All O(n³) work is done on the n×n Gram side. Only two O(mn²) matmuls
+    are performed: the initial Gram and the final projection. This halves
+    the large-matmul count vs the naive rectangular iteration.
+
+    X_{k+1} = X_k @ M_k  where  M_k = α_k I + β_k (I + c_k G_k)^{-1}
+    G_{k+1} = M_k @ G_k @ M_k   (M_k and G_k commute)
+    X_final = X_0 @ (M_0 @ M_1)
     """
     assert a.ndim == 2
     transposed = False
@@ -65,33 +67,53 @@ def dwh2(
         transposed = True
 
     n = x.shape[1]
-    m = x.shape[0]
-    gram = torch.empty((n, n), device=x.device, dtype=x.dtype)
-    inv_gram = torch.empty((n, n), device=x.device, dtype=x.dtype)
-    rhs_t = torch.empty((m, n), device=x.device, dtype=x.dtype)
     stats = CholStats()
-
-    coeffs, ell_final = _dwh_schedule(ell0=ell0, steps=2)
     inverse_fn = spd_inverse_safe if robust else spd_inverse_fast
 
-    for aa, bb, cc in coeffs:
-        torch.mm(x.mT, x, out=gram)
-        gram.mul_(cc)
-        gram.diagonal().add_(1.0)
+    # n×n buffers
+    gram = torch.empty((n, n), device=x.device, dtype=x.dtype)
+    buf = torch.empty((n, n), device=x.device, dtype=x.dtype)
+    inv = torch.empty((n, n), device=x.device, dtype=x.dtype)
+    m_acc = torch.eye(n, device=x.device, dtype=x.dtype)
 
+    # Single large matmul: Gram
+    torch.mm(x.mT, x, out=gram)
+
+    coeffs, _ = _dwh_schedule(ell0=ell0, steps=2)
+    for aa, bb, cc in coeffs:
         alpha = bb / cc
         beta = aa - alpha
+
+        # Form (I + c*G) in buf, keeping gram intact
+        buf.copy_(gram)
+        buf.mul_(cc)
+        buf.diagonal().add_(1.0)
+
+        # inv = (I + c*G)^{-1}
         inverse_fn(
-            gram,
+            buf,
             stats,
             tf32=tf32,
-            out=inv_gram,
+            out=inv,
             diag_floor_rel=(1e-6 if robust else diag_floor_rel),
-            **({"scaled_jitter_scale": scaled_jitter_scale} if not robust else {}),
+            **({} if robust else {"scaled_jitter_scale": scaled_jitter_scale}),
         )
-        torch.mm(x, inv_gram, out=rhs_t)
-        x.mul_(alpha).add_(rhs_t, alpha=beta)
+
+        # M_k = alpha*I + beta*inv  (reuse inv buffer)
+        inv.mul_(beta)
+        inv.diagonal().add_(alpha)
+
+        # G_{k+1} = M_k @ G_k @ M_k  (all n×n)
+        torch.mm(gram, inv, out=buf)
+        torch.mm(inv, buf, out=gram)
+
+        # Accumulate: m_acc = m_acc @ M_k
+        torch.mm(m_acc, inv, out=buf)
+        m_acc, buf = buf, m_acc
+
+    # Single large matmul: final projection
+    result = x @ m_acc
 
     if transposed:
-        x = x.mT.contiguous()
-    return DWH2Result(q=x, ell_final=ell_final, stats=stats)
+        result = result.mT.contiguous()
+    return DWH2Result(q=result, stats=stats)

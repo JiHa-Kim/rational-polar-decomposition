@@ -23,10 +23,26 @@ class CholStats:
         self.diag_floored += int(diag_floored)
 
 
-def _default_form_u(dtype: torch.dtype, tf32: bool) -> float:
+def _form_u(dtype: torch.dtype, tf32: bool) -> float:
     if dtype == torch.float32 and tf32 and torch.cuda.is_available():
         return 2.0**-10
     return float(torch.finfo(dtype).eps)
+
+
+def _scale_and_symmetrize(
+    a: torch.Tensor, diag_floor_rel: float
+) -> torch.Tensor:
+    """Unit-diagonal scaling + exact symmetrization. Returns scale vector."""
+    diag = a.diagonal()
+    if diag_floor_rel > 0.0:
+        tiny = torch.finfo(a.dtype).tiny
+        floor = torch.mean(diag).clamp_min(tiny) * diag_floor_rel
+        diag.clamp_min_(floor)
+    s = torch.rsqrt(diag)
+    a.mul_(s[:, None]).mul_(s[None, :])
+    # Two sequential in-place muls can break symmetry; force it back.
+    a = 0.5 * (a + a.mT)
+    return a, s
 
 
 def spd_inverse_fast(
@@ -38,33 +54,21 @@ def spd_inverse_fast(
     diag_floor_rel: float = 0.0,
     out: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Fast compile-friendly robust SPD inverse for hot paths.
+    """Compile-friendly SPD inverse with unconditional jitter."""
+    n = a.shape[0]
+    a, s = _scale_and_symmetrize(a, diag_floor_rel)
 
-    This path assumes the input is already numerically close to SPD. It avoids
-    Python-side error inspection and retry loops so `torch.compile` can keep the
-    entire region in a single graph. A tiny unconditional diagonal jitter in the
-    scaled space buys robustness without a graph break.
-    """
-    assert a.ndim == 2 and a.shape[0] == a.shape[1]
-
-    diag = a.diagonal()
-    tiny = torch.finfo(a.dtype).tiny
-    mean_diag = torch.mean(diag).clamp_min(tiny)
-    if diag_floor_rel > 0.0:
-        diag_floor = mean_diag * diag_floor_rel
-        diag.clamp_min_(diag_floor)
-
-    s = torch.rsqrt(diag)
-    a.mul_(s[:, None]).mul_(s[None, :])
-
-    jitter = max(scaled_jitter_scale * _default_form_u(a.dtype, tf32), 0.0)
+    # Scale jitter by matrix dimension — O(n*eps) is the expected
+    # rounding error in the Gram product for n-wide inner products.
+    u = _form_u(a.dtype, tf32)
+    jitter = max(scaled_jitter_scale * n * u, 0.0)
     if jitter > 0.0:
         a.diagonal().add_(jitter)
 
     l = torch.linalg.cholesky(a)
     inv_a = torch.cholesky_inverse(l, upper=False, out=out)
-
     inv_a.mul_(s[:, None]).mul_(s[None, :])
+
     stats.update(shifted=jitter > 0.0, retries=0, jitter=jitter, diag_floored=0)
     return inv_a
 
@@ -79,25 +83,11 @@ def spd_inverse_safe(
     max_retries: int = 4,
     out: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Defensive SPD solve with retries.
+    """Defensive SPD inverse with retries for stress testing."""
+    n = a.shape[0]
+    a, s = _scale_and_symmetrize(a, diag_floor_rel)
 
-    Keep this path for stress testing and numerical debugging. It is intentionally
-    slower than `spd_cholesky_solve_fast` because it pays for Python-side error
-    inspection and retry logic.
-    """
-    assert a.ndim == 2 and a.shape[0] == a.shape[1]
-
-    a = 0.5 * (a + a.mT)
-    diag = a.diagonal()
-    tiny = torch.finfo(a.dtype).tiny
-    mean_diag = torch.mean(diag).clamp_min(tiny)
-    diag_floor = mean_diag * diag_floor_rel
-    diag.clamp_min_(diag_floor)
-
-    s = torch.rsqrt(diag)
-    a.mul_(s[:, None]).mul_(s[None, :])
-
-    base_shift = max(base_shift_scale * _default_form_u(a.dtype, tf32), 1e-7)
+    base_shift = max(base_shift_scale * n * _form_u(a.dtype, tf32), 1e-7)
     shifted = False
     retries = 0
     jitter = 0.0

@@ -109,29 +109,33 @@ def _apply_block(
         y.diagonal().add_(first_gram_jitter)
 
     q = torch.eye(n, device=x.device, dtype=x.dtype)
-    e = torch.empty_like(y)
-    e2 = torch.empty_like(y)
-    h = torch.empty_like(y)
-    temp = torch.empty_like(y)
+    buf_a = torch.empty_like(y)  # e, then reused as temp
+    buf_b = torch.empty_like(y)  # e2, then becomes h in-place
     q_new = torch.empty_like(y)
 
     for h0, h1, h2 in coeffs:
-        torch.neg(y, out=e)
-        e.diagonal().add_(1.0)
-        torch.mm(e, e, out=e2)
+        # buf_a = I - Y
+        torch.neg(y, out=buf_a)
+        buf_a.diagonal().add_(1.0)
 
-        torch.mul(e2, h2, out=h)
-        h.add_(e, alpha=h1)
-        h.diagonal().add_(h0)
+        # buf_b = (I - Y)^2
+        torch.mm(buf_a, buf_a, out=buf_b)
+
+        # h = h0*I + h1*(I-Y) + h2*(I-Y)^2  — computed in-place in buf_b
+        buf_b.mul_(h2)
+        buf_b.add_(buf_a, alpha=h1)
+        buf_b.diagonal().add_(h0)
+        # buf_a is now dead; buf_b holds h
 
         if symmetrize_inputs:
-            h = _symmetrize(h)
+            buf_b = _symmetrize(buf_b)
 
-        torch.mm(q, h, out=q_new)
+        torch.mm(q, buf_b, out=q_new)
         q, q_new = q_new, q
 
-        torch.mm(y, h, out=temp)
-        torch.mm(temp, h, out=y)
+        # Y_new = h @ Y @ h  (= Y @ h^2 since h and Y commute)
+        torch.mm(y, buf_b, out=buf_a)  # reuse buf_a as temp
+        torch.mm(buf_a, buf_b, out=y)
 
         if symmetrize_inputs:
             y = _symmetrize(y)

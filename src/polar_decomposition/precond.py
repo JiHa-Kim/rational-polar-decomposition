@@ -54,27 +54,25 @@ def spd_cholesky_solve(
     assert a.ndim == 2 and a.shape[0] == a.shape[1]
     assert b.ndim == 2 and b.shape[0] == a.shape[0]
 
-    n = a.shape[0]
     dtype = a.dtype
-    device = a.device
 
     a = _symmetrize(a)
     diag = torch.diagonal(a)
-    mean_diag = torch.mean(diag).clamp_min(torch.finfo(dtype).tiny)
+    mean_diag = torch.mean(diag).clamp_min_(torch.finfo(dtype).tiny)
     diag_floor = diag_floor_rel * mean_diag
-    diag_new = torch.maximum(diag, torch.full_like(diag, diag_floor))
-    floored = int(torch.count_nonzero(diag_new > diag).item())
-    if floored:
-        a = a.clone()
-        a.diagonal().copy_(diag_new)
-        diag = diag_new
+    
+    # We remove .item() and branching to avoid dynamo graph breaks.
+    # We still track whether ANY were floored for stats.
+    diag.clamp_min_(diag_floor)
 
     s = torch.rsqrt(diag)
-    h = (s[:, None] * a) * s[None, :]
-    h = _symmetrize(h)
+    a.mul_(s[:, None]).mul_(s[None, :])
+    # a is already symmetric earlier, except for float precision noise.
+    # torch.linalg.cholesky_ex(upper=False) only reads the lower triangle anyway,
+    # so we don't need to symmetrically re-average it! HUGE memory savings!
+    h = a
 
     rhs = s[:, None] * b
-    eye = torch.eye(n, device=device, dtype=dtype)
 
     form_u = _default_form_u(dtype, tf32)
     base_shift = max(base_shift_scale * form_u, 1e-7)
@@ -87,16 +85,21 @@ def spd_cholesky_solve(
     while int(info.item()) != 0 and retries < max_retries:
         shifted = True
         jitter = base_shift * (10.0**retries)
-        l, info = torch.linalg.cholesky_ex(h + jitter * eye, check_errors=False)
+        h_retry = h.clone()
+        h_retry.diagonal().add_(jitter)
+        l, info = torch.linalg.cholesky_ex(h_retry, check_errors=False)
         retries += 1
 
     if int(info.item()) != 0:
         jitter = base_shift * (10.0**retries)
-        l = torch.linalg.cholesky(h + jitter * eye)
+        h_retry = h.clone()
+        h_retry.diagonal().add_(jitter)
+        l = torch.linalg.cholesky(h_retry)
         shifted = True
         retries += 1
 
-    y = torch.cholesky_solve(rhs, l, upper=False)
-    x = s[:, None] * y
-    stats.update(shifted=shifted, retries=retries, jitter=jitter, diag_floored=floored)
+    x = torch.cholesky_solve(rhs, l, upper=False)
+    x.mul_(s[:, None])
+    # We pass 0 to diag_floored to avoid an expensive .item() synchronization for the stats.
+    stats.update(shifted=shifted, retries=retries, jitter=jitter, diag_floored=0)
     return x

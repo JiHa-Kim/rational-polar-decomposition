@@ -35,9 +35,7 @@ def _form_u(dtype: torch.dtype) -> float:
     return float(torch.finfo(dtype).eps)
 
 
-def _scratch_like(
-    a: torch.Tensor, out: torch.Tensor | None = None
-) -> torch.Tensor:
+def _scratch_like(a: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
     if out is None or out.data_ptr() == a.data_ptr():
         return torch.empty_like(a)
     return out
@@ -76,9 +74,7 @@ def _inverse_from_cholesky(
     benchmark purposes.
     """
     inv_a = (
-        torch.empty_like(l)
-        if out is None or out.data_ptr() == l.data_ptr()
-        else out
+        torch.empty_like(l) if out is None or out.data_ptr() == l.data_ptr() else out
     )
     inv_a.zero_()
     inv_a.diagonal().fill_(1.0)

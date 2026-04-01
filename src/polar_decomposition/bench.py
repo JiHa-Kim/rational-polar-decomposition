@@ -282,9 +282,7 @@ def summarize(
     n = q.shape[1]
     gram = q.mT @ q
     gram.diagonal().sub_(1.0)
-    ortho_fro = float(
-        torch.linalg.matrix_norm(gram, ord="fro").item() / math.sqrt(n)
-    )
+    ortho_fro = float(torch.linalg.matrix_norm(gram, ord="fro").item() / math.sqrt(n))
     q_fro_error = None
     objective_ratio = None
     objective_proj = None

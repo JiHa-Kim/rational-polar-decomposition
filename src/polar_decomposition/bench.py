@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import statistics
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from collections.abc import Sequence
 from typing import Callable, Optional
 
 import torch
@@ -192,6 +193,64 @@ def measure(
     return out, times
 
 
+def _projected_objective_ratio(
+    q: torch.Tensor,
+    a: torch.Tensor,
+    ref_obj: float,
+    *,
+    audit_device: str,
+    audit_chunk_rows: int,
+) -> float:
+    transposed = q.shape[0] < q.shape[1]
+    q_use = q.mT.contiguous() if transposed else q
+    a_use = a.mT.contiguous() if transposed else a
+
+    target_device = torch.device("cpu") if audit_device == "cpu" else q.device
+    n = q_use.shape[1]
+    block_rows = q_use.shape[0] if audit_chunk_rows <= 0 else audit_chunk_rows
+
+    gram = torch.zeros((n, n), device=target_device, dtype=torch.float64)
+    cross = torch.zeros((n, n), device=target_device, dtype=torch.float64)
+
+    for start in range(0, q_use.shape[0], block_rows):
+        stop = min(start + block_rows, q_use.shape[0])
+        q_chunk = q_use[start:stop].to(device=target_device, dtype=torch.float64)
+        a_chunk = a_use[start:stop].to(device=target_device, dtype=torch.float64)
+        gram.addmm_(q_chunk.mT, q_chunk)
+        cross.addmm_(q_chunk.mT, a_chunk)
+
+    gram = 0.5 * (gram + gram.mT)
+    evals, evecs = torch.linalg.eigh(gram)
+    cutoff = float(torch.finfo(torch.float64).eps) * max(float(evals.max().item()), 1.0)
+    evals.clamp_min_(cutoff)
+    inv_sqrt = (evecs * torch.rsqrt(evals)[None, :]) @ evecs.mT
+    objective_proj_val = float(torch.einsum("ij,ji->", inv_sqrt, cross).item())
+    return float(objective_proj_val / ref_obj)
+
+
+def _q_fro_error(
+    q: torch.Tensor,
+    ref_q: torch.Tensor,
+    *,
+    chunk_rows: int,
+) -> float:
+    if ref_q.device == q.device and (chunk_rows <= 0 or chunk_rows >= q.shape[0]):
+        return float(
+            torch.linalg.matrix_norm(q - ref_q, ord="fro").item() / math.sqrt(q.shape[1])
+        )
+
+    target_device = q.device
+    block_rows = q.shape[0] if chunk_rows <= 0 else chunk_rows
+    sq = torch.zeros((), device=target_device, dtype=torch.float64)
+    for start in range(0, q.shape[0], block_rows):
+        stop = min(start + block_rows, q.shape[0])
+        q_chunk = q[start:stop].to(device=target_device, dtype=torch.float64)
+        ref_chunk = ref_q[start:stop].to(device=target_device, dtype=torch.float64)
+        diff = q_chunk - ref_chunk
+        sq += torch.sum(diff * diff)
+    return float(torch.sqrt(sq).item() / math.sqrt(q.shape[1]))
+
+
 def summarize(
     *,
     case: Case,
@@ -204,6 +263,8 @@ def summarize(
     stats: CholStats,
     is_stress: bool,
     audit: bool,
+    audit_device: str,
+    audit_chunk_rows: int,
 ) -> Record:
     n = q.shape[1]
     eye = torch.eye(n, device=q.device, dtype=q.dtype)
@@ -215,8 +276,10 @@ def summarize(
     objective_ratio = None
     objective_proj = None
     if ref_q is not None and ref_obj is not None:
-        q_fro_error = float(
-            torch.linalg.matrix_norm(q - ref_q, ord="fro").item() / math.sqrt(n)
+        q_fro_error = _q_fro_error(
+            q,
+            ref_q,
+            chunk_rows=audit_chunk_rows,
         )
         objective = float(torch.sum(q * case.a).item())
         objective_ratio = float(objective / ref_obj)
@@ -224,13 +287,15 @@ def summarize(
         # Projected objective: Q_proj = Q (Q^T Q)^{-1/2} = U V^T from SVD(Q)
         if audit:
             try:
-                q_audit = q.to(torch.float64)
-                u, _, vh = torch.linalg.svd(q_audit, full_matrices=False)
-                q_proj_mat = u @ vh
-                objective_proj_val = float(
-                    torch.sum(q_proj_mat * case.a.to(torch.float64)).item()
+                if q.is_cuda:
+                    torch.cuda.empty_cache()
+                objective_proj = _projected_objective_ratio(
+                    q,
+                    case.a,
+                    ref_obj,
+                    audit_device=audit_device,
+                    audit_chunk_rows=audit_chunk_rows,
                 )
-                objective_proj = float(objective_proj_val / ref_obj)
             except Exception:
                 objective_proj = None
 
@@ -239,7 +304,7 @@ def summarize(
         method=method,
         is_stress=is_stress,
         trials=trials,
-        runtime_ms_median=float(torch.tensor(times).median().item()),
+        runtime_ms_median=float(statistics.median(times)),
         runtime_ms_min=float(min(times)),
         ortho_fro=ortho_fro,
         q_fro_error=q_fro_error,
@@ -290,7 +355,20 @@ def main() -> None:
     parser.add_argument(
         "--audit",
         action="store_true",
-        help="Enable expensive accuracy audit via fp64 SVD projection.",
+        help="Enable low-memory projected-objective audit in float64.",
+    )
+    parser.add_argument(
+        "--audit-device",
+        type=str,
+        default="same",
+        choices=["same", "cpu"],
+        help="Where to run the projected-objective audit. 'cpu' minimizes GPU memory use.",
+    )
+    parser.add_argument(
+        "--audit-chunk-rows",
+        type=int,
+        default=2048,
+        help="Rows per chunk for low-memory projected-objective audit accumulation.",
     )
     parser.add_argument(
         "--cases",
@@ -323,7 +401,7 @@ def main() -> None:
     out_f = line_writer(args.output)
 
     try:
-        with torch.no_grad():
+        with torch.inference_mode():
             coeffs = pe5_coefficients(ell0=args.ell0, steps=5)
 
             dwh2_fn = dwh2
@@ -357,6 +435,9 @@ def main() -> None:
                         torch.float64 if args.reference == "fp64" else torch.float32
                     )
                     ref_q, ref_obj = polar_reference(case.a, dtype=ref_dtype)
+                    if args.audit and ref_q.is_cuda:
+                        ref_q = ref_q.cpu()
+                        torch.cuda.empty_cache()
 
                 # Pre-calculate stress coefficients if needed
                 case_coeffs = coeffs
@@ -387,6 +468,8 @@ def main() -> None:
                         stats=out.stats,
                         is_stress=is_stress,
                         audit=args.audit,
+                        audit_device=args.audit_device,
+                        audit_chunk_rows=args.audit_chunk_rows,
                     )
                     row = json.dumps(asdict(record))
                     if not args.quiet:

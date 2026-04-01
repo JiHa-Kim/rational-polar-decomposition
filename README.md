@@ -2,7 +2,7 @@
 
 This repository is a deliberately small head-to-head comparison between two fast approximate polar-factor methods on tall matrices relevant to Muon-like optimizers:
 
-- `dwh2`: 2-step dynamically weighted Halley (DWH), implemented via small-side Gram accumulation with Cholesky-based SPD inverse.
+- `dwh2`: 2-step dynamically weighted Halley (DWH), implemented in rectangular form with recomputed small-side Gram solves so full-TF32 runs stay numerically stable.
 - `pe5`: 5-step degree-5 Polar Express, implemented with the fast small-side rectangular trick and restart interval 3.
 
 ## Goals
@@ -41,14 +41,14 @@ $$
 
 where $G_k = X_k^\top X_k$ and $\alpha_k = b_k/c_k$, $\beta_k = a_k - \alpha_k$.
 
-**Small-side accumulation.** Since $M_k$ and $G_k$ share eigenvectors (both are functions of the same SPD matrix), we track the Gram entirely in $n \times n$ space:
+**Rectangular recomputation.** The current kernel recomputes the small-side Gram from the actual iterate each step,
 
 $$
-G_{k+1} = M_k\, G_k\, M_k, \qquad
-X_{\text{final}} = X_0 (M_0 M_1).
+G_k = X_k^\top X_k, \qquad
+X_{k+1} = X_k M_k.
 $$
 
-This reduces the number of large $O(mn^2)$ matmuls from 4 to 2 (one initial Gram, one final projection), with all intermediate work being $O(n^3)$.
+This uses four large $O(mn^2)$ matmuls across the two DWH steps. On the target GPU that turned out to be both faster and more stable than the theoretically leaner accumulated-Gram variant once full TF32 tensor-core matmuls were enabled.
 
 ### PE5
 
@@ -124,6 +124,7 @@ The benchmark logs:
 - `ortho_fro = ||Q^T Q - I||_F / sqrt(n)`
 - `q_fro_error`, if reference polar computation is enabled
 - `objective_ratio = <Q, A> / <Q_ref, A>`, if reference is enabled
+- `objective_proj`, if audit is enabled: objective ratio after projecting `Q` to the nearest orthogonal factor
 - DWH Cholesky health stats:
   - `chol_calls`
   - `chol_shifted_calls`
@@ -133,37 +134,19 @@ The benchmark logs:
 
 Reference quality evaluation is optional and is computed only from the matrix itself via a float64 eigendecomposition of `A^T A`.
 
+The audit path is intentionally low-memory. Instead of forming a tall float64 SVD of `Q`, it accumulates `Q^T Q` and `Q^T A` in row chunks and does only the final `n x n` eigendecomposition in float64. That keeps the audit feasible on GPUs where the timed benchmark itself fits but a naive audit does not.
+
 ## Results
 
-Typical benchmark results on a modern GPU (16384 x 4096, CUDA, TF32):
+Representative benchmark results on this GPU (16384 x 4096, CUDA, TF32):
 
-| Case | Method | Runtime (ms) | Ortho Error (Fro) | Cholesky Shifts |
-| :--- | :--- | :--- | :--- | :--- |
-| **Gaussian** | DWH2 | 589.6 | 0.0553 | 2 |
-| | PE5 | 1130.0 | 0.1780 | 0 |
-| **Lognormal Cols** | DWH2 | 590.2 | 0.3654 | 2 |
-| | PE5 | 1133.4 | 0.4664 | 0 |
-| **AR1 Cols** | DWH2 | 591.0 | 0.1936 | 2 |
-| | PE5 | 1129.2 | 0.3915 | 0 |
-| **Duplicate Cols (Stress)** | DWH2 | 594.0 | 0.8835 | 2 |
-| | PE5 | 1139.0 | 1.0969 | 0 |
-| **Low-rank Noise (Stress)** | DWH2 | 593.9 | 0.9890 | 2 |
-| | PE5 | 1142.2 | 1.0183 | 0 |
-| **Ill-conditioned** | DWH2 | 594.9 | 0.7770 | 2 |
-| | PE5 | 1146.8 | 0.8032 | 0 |
-| **Heavy-tail T** | DWH2 | 596.6 | 0.0410 | 2 |
-| | PE5 | 1149.2 | 0.1747 | 0 |
-| **Sparse-like** | DWH2 | 581.4 | 0.0552 | 2 |
-| | PE5 | 1134.5 | 0.1781 | 0 |
-| **Orthogonal Noisy** | DWH2 | 598.0 | 0.0623 | 2 |
-| | PE5 | 1151.9 | 0.0860 | 0 |
-| **Rank-1 Heavy** | DWH2 | 593.4 | 0.9999 | 2 |
-| | PE5 | 1140.5 | 0.9999 | 0 |
-| **Adversarial** | DWH2 | 601.8 | 0.1387 | 2 |
-| | PE5 | 1157.3 | 0.2353 | 0 |
+- DWH2 median runtime across the 11 default cases: `463.9 ms`
+- PE5 median runtime across the 11 default cases: `665.5 ms`
+- Gaussian: DWH2 `457.6 ms`, `ortho_fro=0.0553`; PE5 `660.8 ms`, `ortho_fro=0.1782`
+- Duplicate cols: DWH2 `461.2 ms`, `ortho_fro=0.8869`; PE5 `665.5 ms`, `ortho_fro=1.0989`
 
 > [!NOTE]
-> DWH2 is roughly **2x faster** than PE5 on tall matrices due to the small-side accumulation reformulating 4 large matmuls into 2. It also retains better orthogonality.
+> With the current full-TF32-stable DWH2 kernel, DWH2 is still clearly faster than PE5 on tall matrices, but the gap is closer to `1.2x` to `1.5x` than the earlier accumulated-Gram implementation suggested.
 
 ## Run
 
@@ -185,9 +168,17 @@ Skip the float64 reference pass:
 uv run bench --device cuda --tf32 --reference none
 ```
 
+Run the low-memory projected-objective audit on GPU:
+
+```bash
+uv run bench --device cuda --tf32 --reference fp32 --audit --audit-device same --audit-chunk-rows 512
+```
+
+Lower `--audit-chunk-rows` further if your GPU is still tight on memory.
+
 ## File layout
 
-- `dwh2.py`: DWH2 kernel (small-side Gram accumulation) and exact scalar schedule.
+- `dwh2.py`: DWH2 kernel (rectangular full-TF32-stable implementation) and exact scalar schedule.
 - `pe5.py`: PE5 offline coefficient generator and fast online kernel.
 - `precond.py`: SPD inverse via Cholesky with diagonal scaling and jitter. Shared `PolarResult` type.
 - `bench.py`: realistic benchmark driver and JSONL logging.

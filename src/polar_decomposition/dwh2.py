@@ -20,15 +20,6 @@ def dwh_coefficients(ell: float) -> tuple[float, float, float, float]:
     return a, b, c, ell_next
 
 
-def _dwh_schedule(ell0: float, steps: int = 2) -> list[tuple[float, float, float]]:
-    coeffs: list[tuple[float, float, float]] = []
-    ell = float(ell0)
-    for _ in range(steps):
-        a, b, c, ell = dwh_coefficients(ell)
-        coeffs.append((a, b, c))
-    return coeffs
-
-
 def dwh2(
     a: torch.Tensor,
     *,
@@ -38,15 +29,13 @@ def dwh2(
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,
 ) -> PolarResult:
-    """Two-step DWH via small-side accumulation.
+    """Two-step rectangular DWH.
 
-    All O(n³) work is done on the n×n Gram side. Only two O(mn²) matmuls
-    are performed: the initial Gram and the final projection. This halves
-    the large-matmul count vs the naive rectangular iteration.
-
-    X_{k+1} = X_k @ M_k  where  M_k = α_k I + β_k (I + c_k G_k)^{-1}
-    G_{k+1} = M_k @ G_k @ M_k   (M_k and G_k commute)
-    X_final = X_0 @ (M_0 @ M_1)
+    The mathematically lean small-side Gram recurrence is attractive on paper,
+    but on this GPU full-TF32 tensor-core matmuls make it noticeably less stable
+    than simply recomputing G_k = X_k^T X_k each step. The rectangular form is
+    also simpler: two Gram builds, two small-side SPD inverses, and two large
+    projections.
     """
     assert a.ndim == 2
     transposed = a.shape[0] < a.shape[1]
@@ -54,52 +43,65 @@ def dwh2(
 
     n = x.shape[1]
     stats = CholStats()
-    inverse_fn = spd_inverse_safe if robust else spd_inverse_fast
+    fast_inverse_kwargs = {
+        "diag_floor_rel": diag_floor_rel,
+        "scaled_jitter_scale": scaled_jitter_scale,
+    }
 
     # n×n buffers
     gram = torch.empty((n, n), device=x.device, dtype=x.dtype)
     buf = torch.empty((n, n), device=x.device, dtype=x.dtype)
     inv = torch.empty((n, n), device=x.device, dtype=x.dtype)
-    m_acc = torch.eye(n, device=x.device, dtype=x.dtype)
+    ell = float(ell0)
+    for _ in range(2):
+        # Large matmul: Gram
+        torch.mm(x.mT, x, out=gram)
 
-    # Single large matmul: Gram
-    torch.mm(x.mT, x, out=gram)
-
-    coeffs = _dwh_schedule(ell0=ell0, steps=2)
-    for aa, bb, cc in coeffs:
+        aa, bb, cc, ell = dwh_coefficients(ell)
         alpha = bb / cc
         beta = aa - alpha
 
-        # Form (I + c*G) in buf, keeping gram intact
+        # Form (I + c*G) in buf, keeping gram intact.
         buf.copy_(gram)
         buf.mul_(cc)
         buf.diagonal().add_(1.0)
 
-        # inv = (I + c*G)^{-1}
-        inverse_fn(
-            buf,
-            stats,
-            tf32=tf32,
-            out=inv,
-            diag_floor_rel=(1e-6 if robust else diag_floor_rel),
-            **({} if robust else {"scaled_jitter_scale": scaled_jitter_scale}),
-        )
+        if robust:
+            spd_inverse_safe(
+                buf,
+                stats,
+                tf32=tf32,
+                out=inv,
+                diag_floor_rel=1e-6,
+            )
+        else:
+            try:
+                spd_inverse_fast(
+                    buf,
+                    stats,
+                    tf32=tf32,
+                    out=inv,
+                    **fast_inverse_kwargs,
+                )
+            except torch._C._LinAlgError:
+                buf.copy_(gram)
+                buf.mul_(cc)
+                buf.diagonal().add_(1.0)
+                spd_inverse_safe(
+                    buf,
+                    stats,
+                    tf32=tf32,
+                    out=inv,
+                    diag_floor_rel=1e-6,
+                )
 
         # M_k = alpha*I + beta*inv  (reuse inv buffer)
         inv.mul_(beta)
         inv.diagonal().add_(alpha)
 
-        # G_{k+1} = M_k @ G_k @ M_k  (all n×n)
-        torch.mm(gram, inv, out=buf)
-        torch.mm(inv, buf, out=gram)
-
-        # Accumulate: m_acc = m_acc @ M_k
-        torch.mm(m_acc, inv, out=buf)
-        m_acc, buf = buf, m_acc
-
-    # Single large matmul: final projection
-    result = x @ m_acc
+        # Large matmul: rectangular update
+        x = x @ inv
 
     if transposed:
-        result = result.mT.contiguous()
-    return PolarResult(q=result, stats=stats)
+        x = x.mT.contiguous()
+    return PolarResult(q=x, stats=stats)

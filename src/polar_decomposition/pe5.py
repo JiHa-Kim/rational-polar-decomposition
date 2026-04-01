@@ -84,8 +84,10 @@ def centered_coefficients(
     return [(a + b + c, -(b + 2.0 * c), c) for (a, b, c) in coeffs]
 
 
-def _symmetrize(a: torch.Tensor) -> torch.Tensor:
-    return 0.5 * (a + a.mT)
+def _symmetrize_(a: torch.Tensor, scratch: torch.Tensor) -> torch.Tensor:
+    scratch.copy_(a.mT)
+    a.add_(scratch).mul_(0.5)
+    return a
 
 
 def _apply_block(
@@ -96,47 +98,48 @@ def _apply_block(
     first_block: bool,
     first_gram_jitter: float,
     symmetrize_inputs: bool,
-) -> torch.Tensor:
-    n = x.shape[1]
-    y = x.mT @ x
+    gram: torch.Tensor,
+    delta: torch.Tensor,
+    poly: torch.Tensor,
+    q_acc: torch.Tensor,
+    q_tmp: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    torch.mm(x.mT, x, out=gram)
     if symmetrize_inputs:
-        y = _symmetrize(y)
+        _symmetrize_(gram, delta)
     if first_block and first_gram_jitter:
-        y.diagonal().add_(first_gram_jitter)
+        gram.diagonal().add_(first_gram_jitter)
 
-    q = torch.eye(n, device=x.device, dtype=x.dtype)
-    buf_a = torch.empty_like(y)  # e, then reused as temp
-    buf_b = torch.empty_like(y)  # e2, then becomes h in-place
-    q_new = torch.empty_like(y)
+    q_acc.zero_()
+    q_acc.diagonal().fill_(1.0)
 
     for h0, h1, h2 in coeffs:
-        # buf_a = I - Y
-        torch.neg(y, out=buf_a)
-        buf_a.diagonal().add_(1.0)
+        # delta = I - gram
+        torch.neg(gram, out=delta)
+        delta.diagonal().add_(1.0)
 
-        # buf_b = (I - Y)^2
-        torch.mm(buf_a, buf_a, out=buf_b)
+        # poly = (I - gram)^2
+        torch.mm(delta, delta, out=poly)
 
-        # h = h0*I + h1*(I-Y) + h2*(I-Y)^2  — computed in-place in buf_b
-        buf_b.mul_(h2)
-        buf_b.add_(buf_a, alpha=h1)
-        buf_b.diagonal().add_(h0)
-        # buf_a is now dead; buf_b holds h
-
-        if symmetrize_inputs:
-            buf_b = _symmetrize(buf_b)
-
-        torch.mm(q, buf_b, out=q_new)
-        q, q_new = q_new, q
-
-        # Y_new = h @ Y @ h  (= Y @ h^2 since h and Y commute)
-        torch.mm(y, buf_b, out=buf_a)  # reuse buf_a as temp
-        torch.mm(buf_a, buf_b, out=y)
+        # poly = h0*I + h1*(I-gram) + h2*(I-gram)^2
+        poly.mul_(h2)
+        poly.add_(delta, alpha=h1)
+        poly.diagonal().add_(h0)
 
         if symmetrize_inputs:
-            y = _symmetrize(y)
+            _symmetrize_(poly, q_tmp)
 
-    return torch.mm(x, q, out=out)
+        torch.mm(q_acc, poly, out=q_tmp)
+        q_acc, q_tmp = q_tmp, q_acc
+
+        # gram_new = poly @ gram @ poly (= gram @ poly^2 since they commute)
+        torch.mm(gram, poly, out=delta)
+        torch.mm(delta, poly, out=gram)
+
+        if symmetrize_inputs:
+            _symmetrize_(gram, q_tmp)
+
+    return torch.mm(x, q_acc, out=out), q_acc, q_tmp
 
 
 def pe5(
@@ -155,23 +158,33 @@ def pe5(
     not worth the cost on the main latency path. Here it is opt-in instead.
     """
     assert a.ndim == 2
-    transposed = False
-    x = a.clone()
-    if x.shape[0] < x.shape[1]:
-        x = x.mT.contiguous()
-        transposed = True
+    transposed = a.shape[0] < a.shape[1]
+    # The restart ping-pong uses the previous output buffer as the next input.
+    # Keep the caller's tensor immutable across repeated invocations.
+    x = a.mT.contiguous() if transposed else a.clone()
 
     centered = centered_coefficients(coeffs or pe5_coefficients(ell0=ell0, steps=5))
+    n = x.shape[1]
+    gram = torch.empty((n, n), device=x.device, dtype=x.dtype)
+    delta = torch.empty_like(gram)
+    poly = torch.empty_like(gram)
+    q_acc = torch.empty_like(gram)
+    q_tmp = torch.empty_like(gram)
     x_buffer = torch.empty_like(x)
     for i in range(0, len(centered), restart_interval):
         block = centered[i : i + restart_interval]
-        x_buffer = _apply_block(
+        x_buffer, q_acc, q_tmp = _apply_block(
             x,
             x_buffer,
             block,
             first_block=(i == 0),
             first_gram_jitter=first_gram_jitter,
             symmetrize_inputs=symmetrize_inputs,
+            gram=gram,
+            delta=delta,
+            poly=poly,
+            q_acc=q_acc,
+            q_tmp=q_tmp,
         )
         x, x_buffer = x_buffer, x
 

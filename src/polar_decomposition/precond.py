@@ -32,8 +32,7 @@ class CholStats:
 
 
 def _form_u(dtype: torch.dtype, tf32: bool) -> float:
-    if dtype == torch.float32 and tf32 and torch.cuda.is_available():
-        return 2.0**-10
+    del tf32
     return float(torch.finfo(dtype).eps)
 
 
@@ -42,7 +41,7 @@ def _scale_and_symmetrize(a: torch.Tensor, diag_floor_rel: float) -> torch.Tenso
     diag = a.diagonal()
     if diag_floor_rel > 0.0:
         tiny = torch.finfo(a.dtype).tiny
-        floor = torch.mean(diag).clamp_min(tiny) * diag_floor_rel
+        floor = torch.mean(diag.abs()).clamp_min(tiny) * diag_floor_rel
         diag.clamp_min_(floor)
     s = torch.rsqrt(diag)
     a.mul_(s[:, None]).mul_(s[None, :])
@@ -86,7 +85,7 @@ def spd_inverse_safe(
     tf32: bool,
     diag_floor_rel: float = 1e-6,
     base_shift_scale: float = 2.0,
-    max_retries: int = 4,
+    max_retries: int = 6,
     out: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Defensive SPD inverse with retries for stress testing."""
@@ -97,12 +96,13 @@ def spd_inverse_safe(
     shifted = False
     retries = 0
     jitter = 0.0
+    shifted_a = torch.empty_like(a)
 
     l, info = torch.linalg.cholesky_ex(a, check_errors=False)
     while int(info.item()) != 0 and retries < max_retries:
         shifted = True
         jitter = base_shift * (10.0**retries)
-        shifted_a = a.clone()
+        shifted_a.copy_(a)
         shifted_a.diagonal().add_(jitter)
         l, info = torch.linalg.cholesky_ex(shifted_a, check_errors=False)
         retries += 1
@@ -110,7 +110,7 @@ def spd_inverse_safe(
     if int(info.item()) != 0:
         shifted = True
         jitter = base_shift * (10.0**retries)
-        shifted_a = a.clone()
+        shifted_a.copy_(a)
         shifted_a.diagonal().add_(jitter)
         l = torch.linalg.cholesky(shifted_a)
         retries += 1

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
+import statistics
 from pathlib import Path
 from typing import Callable
 
 import torch
 from torch.profiler import ProfilerActivity, profile
 
-from .bench import make_case, normalize_fro, set_fast_matmul
+from .bench import make_case, measure, normalize_fro, set_fast_matmul
 from .dwh2 import dwh2
 from .pe5 import PAPER_MUON_ELL, pe5, pe5_coefficients
 
@@ -27,34 +27,6 @@ def compile_fn(
     }:
         return torch.compile(fn, mode=None if mode == "default" else mode)  # type: ignore[arg-type]
     raise ValueError(f"unknown mode {mode}")
-
-
-def measure_ms(
-    fn: Callable[[], object], warmup: int, iters: int
-) -> tuple[object, float, float]:
-    out = None
-    for _ in range(warmup):
-        out = fn()
-    if torch.cuda.is_available():
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        times = []
-        for _ in range(iters):
-            torch.cuda.synchronize()
-            start.record()
-            out = fn()
-            end.record()
-            end.synchronize()
-            times.append(float(start.elapsed_time(end)))
-        times_t = torch.tensor(times)
-        return out, float(times_t.median().item()), float(times_t.min().item())
-    times = []
-    for _ in range(iters):
-        t0 = time.perf_counter()
-        out = fn()
-        times.append((time.perf_counter() - t0) * 1000.0)
-    times_t = torch.tensor(times)
-    return out, float(times_t.median().item()), float(times_t.min().item())
 
 
 def main() -> None:
@@ -117,7 +89,9 @@ def main() -> None:
     fn = compile_fn(base, args.mode)
 
     with torch.inference_mode():
-        out, median_ms, min_ms = measure_ms(lambda: fn(a), args.warmup, args.iters)
+        out, times = measure(lambda: fn(a), args.iters, args.warmup)
+        median_ms = float(statistics.median(times))
+        min_ms = float(min(times))
         print(
             json.dumps(
                 {

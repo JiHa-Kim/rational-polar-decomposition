@@ -208,3 +208,5 @@ __marimo__/
 
 # Benchmarks
 runs/
+profiles/
+profiles_*/

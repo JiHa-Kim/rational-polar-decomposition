@@ -25,12 +25,14 @@ class Case:
 class Record:
     case: str
     method: str
+    is_stress: bool
     trials: int
     runtime_ms_median: float
     runtime_ms_min: float
     ortho_fro: float
     q_fro_error: Optional[float]
     objective_ratio: Optional[float]
+    objective_proj: Optional[float]
     chol_calls: int
     chol_shifted_calls: int
     chol_total_retries: int
@@ -194,6 +196,7 @@ def summarize(
     method: str,
     trials: int,
     stats: CholStats,
+    is_stress: bool,
 ) -> Record:
     n = q.shape[1]
     eye = torch.eye(n, device=q.device, dtype=q.dtype)
@@ -203,21 +206,35 @@ def summarize(
     )
     q_fro_error = None
     objective_ratio = None
+    objective_proj = None
     if ref_q is not None and ref_obj is not None:
         q_fro_error = float(
             torch.linalg.matrix_norm(q - ref_q, ord="fro").item() / math.sqrt(n)
         )
         objective = float(torch.sum(q * case.a).item())
         objective_ratio = float(objective / ref_obj)
+
+        # Projected objective: Q_proj = Q (Q^T Q)^{-1/2} = U V^T from SVD(Q)
+        try:
+            q_dp = q.to(torch.float64)
+            u, _, vh = torch.linalg.svd(q_dp, full_matrices=False)
+            q_proj = u @ vh
+            objective_proj_val = float(torch.sum(q_proj * case.a.to(torch.float64)).item())
+            objective_proj = float(objective_proj_val / ref_obj)
+        except Exception:
+            objective_proj = None
+
     return Record(
         case=case.name,
         method=method,
+        is_stress=is_stress,
         trials=trials,
         runtime_ms_median=float(torch.tensor(times).median().item()),
         runtime_ms_min=float(min(times)),
         ortho_fro=ortho_fro,
         q_fro_error=q_fro_error,
         objective_ratio=objective_ratio,
+        objective_proj=objective_proj,
         chol_calls=stats.calls,
         chol_shifted_calls=stats.shifted_calls,
         chol_total_retries=stats.total_retries,
@@ -295,7 +312,13 @@ def main() -> None:
                 dwh2_fn = torch.compile(dwh2, mode="max-autotune") # type: ignore
                 pe5_fn = torch.compile(pe5, mode="max-autotune") # type: ignore
 
+            STRESS_CASES = {"duplicate_cols", "lowrank_noise"}
+            STRESS_ELL0 = 1e-6
+
             for i, case_name in enumerate(args.cases):
+                is_stress = case_name in STRESS_CASES
+                case_ell0 = STRESS_ELL0 if is_stress else args.ell0
+
                 case = make_case(
                     case_name,
                     args.rows,
@@ -311,10 +334,15 @@ def main() -> None:
                 if not args.no_reference:
                     ref_q, ref_obj = polar_reference(case.a)
 
+                # Pre-calculate stress coefficients if needed
+                case_coeffs = coeffs
+                if is_stress and case_ell0 != args.ell0:
+                    case_coeffs = pe5_coefficients(ell0=case_ell0, steps=5)
+
                 methods: Dict[str, Callable[[], object]] = {
-                    "dwh2": lambda a=case.a: dwh2_fn(a, ell0=args.ell0, tf32=args.tf32),
-                    "pe5": lambda a=case.a, coeffs=coeffs: pe5_fn(
-                        a, ell0=args.ell0, coeffs=coeffs
+                    "dwh2": lambda a=case.a, ell=case_ell0: dwh2_fn(a, ell0=ell, tf32=args.tf32),
+                    "pe5": lambda a=case.a, cs=case_coeffs, ell=case_ell0: pe5_fn(
+                        a, ell0=ell, coeffs=cs
                     ),
                 }
 
@@ -338,6 +366,7 @@ def main() -> None:
                         method=method_name,
                         trials=args.trials,
                         stats=stats,
+                        is_stress=is_stress,
                     )
                     row = json.dumps(asdict(record), sort_keys=True)
                     if not args.quiet:

@@ -457,9 +457,7 @@ def main() -> None:
                     case_coeffs = pe5_coefficients(ell0=case_ell0, steps=5)
 
                 methods: dict[str, Callable[[], object]] = {
-                    "dwh2": lambda a=case.a, ell=case_ell0: dwh2_fn(
-                        a, ell0=ell, tf32=args.tf32
-                    ),
+                    "dwh2": lambda a=case.a, ell=case_ell0: dwh2_fn(a, ell0=ell),
                     "pe5": lambda a=case.a, cs=case_coeffs, ell=case_ell0: pe5_fn(
                         a, ell0=ell, coeffs=cs
                     ),

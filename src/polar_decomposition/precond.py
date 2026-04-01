@@ -31,8 +31,7 @@ class CholStats:
         self.diag_floored += int(diag_floored)
 
 
-def _form_u(dtype: torch.dtype, tf32: bool) -> float:
-    del tf32
+def _form_u(dtype: torch.dtype) -> float:
     return float(torch.finfo(dtype).eps)
 
 
@@ -69,7 +68,6 @@ def spd_inverse_fast(
     a: torch.Tensor,
     stats: CholStats,
     *,
-    tf32: bool,
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,
     out: torch.Tensor | None = None,
@@ -81,7 +79,7 @@ def spd_inverse_fast(
 
     # Scale jitter by matrix dimension — O(n*eps) is the expected
     # rounding error in the Gram product for n-wide inner products.
-    u = _form_u(a.dtype, tf32)
+    u = _form_u(a.dtype)
     jitter = max(scaled_jitter_scale * n * u, 0.0)
     if jitter > 0.0:
         a.diagonal().add_(jitter)
@@ -103,7 +101,6 @@ def spd_inverse_safe(
     a: torch.Tensor,
     stats: CholStats,
     *,
-    tf32: bool,
     diag_floor_rel: float = 1e-6,
     base_shift_scale: float = 2.0,
     max_retries: int = 6,
@@ -114,7 +111,7 @@ def spd_inverse_safe(
     scratch = _scratch_like(a, out)
     s, diag_floored = _scale_and_symmetrize(a, diag_floor_rel, scratch=scratch)
 
-    base_shift = max(base_shift_scale * n * _form_u(a.dtype, tf32), 1e-7)
+    base_shift = max(base_shift_scale * n * _form_u(a.dtype), 1e-7)
     shifted = False
     retries = 0
     jitter = 0.0

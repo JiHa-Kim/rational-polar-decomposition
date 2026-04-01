@@ -75,7 +75,7 @@ def main() -> None:
     if args.method == "dwh2":
 
         def base(x):
-            return dwh2(x, ell0=PAPER_MUON_ELL, tf32=args.tf32, robust=args.robust_dwh2)
+            return dwh2(x, ell0=PAPER_MUON_ELL, robust=args.robust_dwh2)
     else:
 
         def base(x):

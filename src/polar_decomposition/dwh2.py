@@ -24,7 +24,6 @@ def dwh2(
     a: torch.Tensor,
     *,
     ell0: float = 1e-3,
-    tf32: bool = True,
     robust: bool = False,
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,
@@ -70,7 +69,6 @@ def dwh2(
             spd_inverse_safe(
                 buf,
                 stats,
-                tf32=tf32,
                 out=inv,
                 diag_floor_rel=1e-6,
             )
@@ -79,7 +77,6 @@ def dwh2(
                 spd_inverse_fast(
                     buf,
                     stats,
-                    tf32=tf32,
                     out=inv,
                     **fast_inverse_kwargs,
                 )
@@ -90,7 +87,6 @@ def dwh2(
                 spd_inverse_safe(
                     buf,
                     stats,
-                    tf32=tf32,
                     out=inv,
                     diag_floor_rel=1e-6,
                 )

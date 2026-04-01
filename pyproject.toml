@@ -1,7 +1,7 @@
 [project]
 name = "polar-decomposition"
 version = "0.1.0"
-description = "Add your description here"
+description = "Lean tall-matrix polar decomposition benchmark and kernels"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

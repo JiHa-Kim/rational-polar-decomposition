@@ -93,7 +93,11 @@ Every DWH solve uses the same small-side SPD inverse stack:
 1. unit-diagonal scaling via `rsqrt(diag)`,
 2. explicit symmetrization to fix float32 rounding from sequential scaling,
 3. unconditional jitter of $O(n \cdot \epsilon)$ in the scaled space,
-4. `cholesky` + `cholesky_inverse`.
+4. `cholesky`,
+5. inverse formation via a recursive block inverse on large CUDA `float32` blocks when
+   TF32 matmuls are enabled, and two triangular solves otherwise.
+
+The scale-and-symmetrize step also has a Triton fast path for large contiguous CUDA `float32` matrices.
 
 A safe path with `cholesky_ex` retries and geometric jitter is available via `robust=True`.
 
@@ -138,17 +142,56 @@ The reference path is also small-side now: it stores only the inverse square roo
 
 The audit path is intentionally low-memory. Instead of forming a tall float64 SVD of `Q`, it accumulates `Q^T Q` and `Q^T A` in row chunks and does only the final `n x n` eigendecomposition in float64. That keeps the audit feasible on GPUs where the timed benchmark itself fits but a naive audit does not.
 
-## Results
+## Final benchmark report
 
-Representative benchmark results on this GPU (16384 x 4096, CUDA, TF32):
+Fresh current-`HEAD` benchmark on this machine:
 
-- DWH2 median runtime across the 11 default cases: `463.9 ms`
-- PE5 median runtime across the 11 default cases: `665.5 ms`
-- Gaussian: DWH2 `457.6 ms`, `ortho_fro=0.0553`; PE5 `660.8 ms`, `ortho_fro=0.1782`
-- Duplicate cols: DWH2 `461.2 ms`, `ortho_fro=0.8869`; PE5 `665.5 ms`, `ortho_fro=1.0989`
+- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_current_serial_20260401.jsonl`
+- shape: `16384 x 4096`
+- cases: 11 default cases
+- measurement: `warmup=1`, `trials=3`
+- execution policy: one benchmark job at a time; no overlapping runs
 
-> [!NOTE]
-> With the current full-TF32-stable DWH2 kernel, DWH2 is still clearly faster than PE5 on tall matrices, but the gap is closer to `1.2x` to `1.5x` than the earlier accumulated-Gram implementation suggested.
+| Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
+| --- | ---: | ---: | ---: |
+| `dwh2` | **`391.05 ms`** | **`0.06084`** | **`0.19371`** |
+| `pe5` | `664.96 ms` | `0.09083` | `0.39122` |
+
+`dwh2` is `1.70x` faster by median runtime and lower on `q_fro_error` in `10/11` cases.
+
+`q_fro_error` is the main quality metric for the raw approximate factor. Raw
+`objective_ratio` is also logged, but it is not a projected metric; use `--audit`
+if you want the projected-objective comparison.
+
+| Case | DWH2 ms | PE5 ms | Speedup | DWH2 `q_fro_error` | PE5 `q_fro_error` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `adversarial_condition` | **`397.96`** | `674.79` | `1.70x` | **`0.06084`** | `0.12410` |
+| `ar1_cols` | **`388.40`** | `656.94` | `1.69x` | **`0.10790`** | `0.23701` |
+| `duplicate_cols` | **`390.79`** | `663.66` | `1.70x` | `0.24178` | **`0.19284`** |
+| `gaussian` | **`390.77`** | `658.84` | `1.69x` | **`0.02810`** | `0.08953` |
+| `heavy_tail_t` | **`393.73`** | `670.08` | `1.70x` | **`0.02758`** | `0.09026` |
+| `ill_conditioned` | **`393.92`** | `668.50` | `1.70x` | **`0.12110`** | `0.19181` |
+| `lognormal_cols` | **`388.83`** | `661.04` | `1.70x` | **`0.15298`** | `0.25366` |
+| `lowrank_noise` | **`391.05`** | `664.96` | `1.70x` | **`0.07714`** | `0.09083` |
+| `orthogonal_noisy` | **`396.85`** | `671.16` | `1.69x` | **`0.03179`** | `0.04190` |
+| `rank_1_heavy` | **`395.25`** | `672.54` | `1.70x` | **`0.01331`** | `0.01443` |
+| `sparse_like` | **`388.20`** | `662.47` | `1.71x` | **`0.02801`** | `0.08958` |
+
+Fresh current-`HEAD` DWH2 profile on the same `16384 x 4096` Gaussian case:
+
+- profile basis: eager mode, 1 warm-up call, 3 profiled iterations
+- timed median from the same run: `388.28 ms`
+- grouping rule: `aten::mm` split by input shape into tall rectangular GEMMs vs small-side square GEMMs
+- table values below are aggregate self CUDA time across the 3 profiled iterations
+
+| DWH2 Hot Path Bucket | Self CUDA Time | Share |
+| --- | ---: | ---: |
+| **Rectangular GEMM** | **`879.32 ms`** | **`76.09%`** |
+| Small-side square GEMM | `153.52 ms` | `13.29%` |
+| Cholesky | `92.08 ms` | `7.97%` |
+| Triangular solve | `15.32 ms` | `1.33%` |
+| Triton affine kernel | `8.84 ms` | `0.76%` |
+| Triton scale/sym kernel | `6.50 ms` | `0.56%` |
 
 ## Run
 
@@ -157,6 +200,8 @@ Default run:
 ```bash
 uv run bench --device cuda --tf32
 ```
+
+For apples-to-apples benchmark numbers, run one benchmark job at a time.
 
 Write to a JSONL file:
 
@@ -184,7 +229,8 @@ If you only need `q_fro_error` and `objective_ratio`, `--reference fp32` already
 
 - `dwh2.py`: DWH2 kernel (rectangular full-TF32-stable implementation) and exact scalar schedule.
 - `pe5.py`: PE5 offline coefficient generator and fast online kernel.
-- `precond.py`: SPD inverse via Cholesky with diagonal scaling and jitter. Shared `PolarResult` type.
+- `precond.py`: SPD inverse stack with fast recursive/solve paths and safe retry path. Shared `PolarResult` type.
+- `triton_ops.py`: optional Triton kernels for small-side symmetrization and affine-diagonal updates.
 - `bench.py`: realistic benchmark driver and JSONL logging.
 - `profile_gpu.py`: GPU profiler with `torch.profiler` trace export.
 - `README.md`: this file.

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Tuple
-
 import torch
 
 from .precond import CholStats, PolarResult, spd_inverse_fast, spd_inverse_safe
 
 
-def dwh_coefficients(ell: float) -> Tuple[float, float, float, float]:
+def dwh_coefficients(ell: float) -> tuple[float, float, float, float]:
     ell = float(max(min(ell, 1.0), 1e-12))
     gamma = (4.0 * (1.0 - ell * ell) / (ell**4)) ** (1.0 / 3.0)
     root = (1.0 + gamma) ** 0.5
@@ -22,15 +20,13 @@ def dwh_coefficients(ell: float) -> Tuple[float, float, float, float]:
     return a, b, c, ell_next
 
 
-def _dwh_schedule(
-    ell0: float, steps: int = 2
-) -> Tuple[List[Tuple[float, float, float]], float]:
-    coeffs: List[Tuple[float, float, float]] = []
+def _dwh_schedule(ell0: float, steps: int = 2) -> list[tuple[float, float, float]]:
+    coeffs: list[tuple[float, float, float]] = []
     ell = float(ell0)
     for _ in range(steps):
         a, b, c, ell = dwh_coefficients(ell)
         coeffs.append((a, b, c))
-    return coeffs, ell
+    return coeffs
 
 
 def dwh2(
@@ -53,11 +49,8 @@ def dwh2(
     X_final = X_0 @ (M_0 @ M_1)
     """
     assert a.ndim == 2
-    transposed = False
-    x = a.clone()
-    if x.shape[0] < x.shape[1]:
-        x = x.mT.contiguous()
-        transposed = True
+    transposed = a.shape[0] < a.shape[1]
+    x = a.mT.contiguous() if transposed else a
 
     n = x.shape[1]
     stats = CholStats()
@@ -72,7 +65,7 @@ def dwh2(
     # Single large matmul: Gram
     torch.mm(x.mT, x, out=gram)
 
-    coeffs, _ = _dwh_schedule(ell0=ell0, steps=2)
+    coeffs = _dwh_schedule(ell0=ell0, steps=2)
     for aa, bb, cc in coeffs:
         alpha = bb / cc
         beta = aa - alpha

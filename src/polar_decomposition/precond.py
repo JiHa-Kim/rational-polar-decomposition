@@ -77,10 +77,12 @@ def spd_cholesky_solve_fast(
         a.diagonal().add_(jitter)
 
     l = torch.linalg.cholesky(a)
-    rhs = _scale_rhs(b, s, out)
-    torch.cholesky_solve(rhs, l, upper=False, out=rhs)
+    inv_a = torch.cholesky_inverse(l, upper=False)
+
+    rhs_input = _scale_rhs(b, s, None)
+    rhs = torch.mm(inv_a, rhs_input, out=out)
     rhs.mul_(s[:, None])
-        
+
     stats.update(shifted=jitter > 0.0, retries=0, jitter=jitter, diag_floored=0)
     return rhs
 
@@ -138,7 +140,11 @@ def spd_cholesky_solve_safe(
         l = torch.linalg.cholesky(shifted_a)
         retries += 1
 
-    torch.cholesky_solve(rhs, l, upper=False, out=rhs)
+    inv_a = torch.cholesky_inverse(l, upper=False)
+
+    rhs_input = _scale_rhs(b, s, None)
+    rhs = torch.mm(inv_a, rhs_input, out=out)
     rhs.mul_(s[:, None])
+
     stats.update(shifted=shifted, retries=retries, jitter=jitter, diag_floored=0)
     return rhs

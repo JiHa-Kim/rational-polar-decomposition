@@ -47,7 +47,7 @@ def dwh2(
     """
     assert a.ndim == 2
     transposed = False
-    x = a
+    x = a.clone()
     if x.shape[0] < x.shape[1]:
         x = x.mT.contiguous()
         transposed = True
@@ -59,9 +59,7 @@ def dwh2(
 
     for _ in range(2):
         aa, bb, cc, ell = dwh_coefficients(ell)
-        g = x.mT @ x
-        g = 0.5 * (g + g.mT)
-        s = eye + cc * g
+        s = torch.addmm(eye, x.mT, x, alpha=cc)
         # Affine-resolvent identity:
         # (aI + bG)(I + cG)^{-1} = (b/c)I + (a - b/c)(I + cG)^{-1}.
         alpha = bb / cc

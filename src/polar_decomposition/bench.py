@@ -102,7 +102,10 @@ def make_case(
     elif name == "heavy_tail_t":
         # Student-t distribution with 2 degress of freedom (heavy tails/outliers)
         z = _randn((m, n), device=device, seed=seed)
-        chi2 = _randn((m, n), device=device, seed=seed + 1)**2 + _randn((m, n), device=device, seed=seed + 2)**2
+        chi2 = (
+            _randn((m, n), device=device, seed=seed + 1) ** 2
+            + _randn((m, n), device=device, seed=seed + 2) ** 2
+        )
         a = z / torch.sqrt(chi2 / 2.0).clamp_min(1e-4)
     elif name == "sparse_like":
         # 95% sparsity pseudo-sparse matrix
@@ -139,24 +142,26 @@ def normalize_fro(a: torch.Tensor) -> torch.Tensor:
     return a / (torch.linalg.matrix_norm(a, ord="fro") + PAPER_NORM_EPS)
 
 
-def polar_reference(a: torch.Tensor) -> Tuple[torch.Tensor, float]:
+def polar_reference(
+    a: torch.Tensor, dtype: torch.dtype = torch.float32
+) -> Tuple[torch.Tensor, float]:
     transposed = False
     x = a
     if x.shape[0] < x.shape[1]:
         x = x.mT.contiguous()
         transposed = True
-    x64 = x.to(torch.float64)
-    g = x64.mT @ x64
+    x_ref = x.to(dtype)
+    g = x_ref.mT @ x_ref
     g = 0.5 * (g + g.mT)
     evals, evecs = torch.linalg.eigh(g)
-    cutoff = float(torch.finfo(torch.float64).eps) * max(float(evals.max().item()), 1.0)
+    cutoff = float(torch.finfo(dtype).eps) * max(float(evals.max().item()), 1.0)
     evals = evals.clamp_min(cutoff)
     inv_sqrt = (evecs * torch.rsqrt(evals)[None, :]) @ evecs.mT
-    q64 = x64 @ inv_sqrt
+    q_ref = x_ref @ inv_sqrt
     if transposed:
-        q64 = q64.mT.contiguous()
-    opt_obj = float(torch.sum(q64 * a.to(torch.float64)).item())
-    return q64.to(a.dtype), opt_obj
+        q_ref = q_ref.mT.contiguous()
+    opt_obj = float(torch.sum(q_ref * a.to(dtype)).item())
+    return q_ref.to(a.dtype), opt_obj
 
 
 def measure(
@@ -197,6 +202,7 @@ def summarize(
     trials: int,
     stats: CholStats,
     is_stress: bool,
+    audit: bool,
 ) -> Record:
     n = q.shape[1]
     eye = torch.eye(n, device=q.device, dtype=q.dtype)
@@ -215,14 +221,17 @@ def summarize(
         objective_ratio = float(objective / ref_obj)
 
         # Projected objective: Q_proj = Q (Q^T Q)^{-1/2} = U V^T from SVD(Q)
-        try:
-            q_dp = q.to(torch.float64)
-            u, _, vh = torch.linalg.svd(q_dp, full_matrices=False)
-            q_proj = u @ vh
-            objective_proj_val = float(torch.sum(q_proj * case.a.to(torch.float64)).item())
-            objective_proj = float(objective_proj_val / ref_obj)
-        except Exception:
-            objective_proj = None
+        if audit:
+            try:
+                q_audit = q.to(torch.float64)
+                u, _, vh = torch.linalg.svd(q_audit, full_matrices=False)
+                q_proj_mat = u @ vh
+                objective_proj_val = float(
+                    torch.sum(q_proj_mat * case.a.to(torch.float64)).item()
+                )
+                objective_proj = float(objective_proj_val / ref_obj)
+            except Exception:
+                objective_proj = None
 
     return Record(
         case=case.name,
@@ -264,12 +273,23 @@ def main() -> None:
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--tf32", action="store_true")
-    parser.add_argument("--compile", action="store_true", help="Compile the algorithmic kernels with torch.compile")
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Compile the algorithmic kernels with torch.compile",
+    )
     parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
     parser.add_argument(
-        "--no-reference",
+        "--reference",
+        type=str,
+        default="none",
+        choices=["none", "fp32", "fp64"],
+        help="Reference polar computation precision (fp64 is very slow/memory-intensive).",
+    )
+    parser.add_argument(
+        "--audit",
         action="store_true",
-        help="Skip float64 reference polar computation.",
+        help="Enable expensive accuracy audit via fp64 SVD projection.",
     )
     parser.add_argument(
         "--cases",
@@ -309,8 +329,8 @@ def main() -> None:
             pe5_fn = pe5
             if args.compile:
                 # Compile main kernels, using fullgraph=False as Cholesky error checks cause harmless Python syncs
-                dwh2_fn = torch.compile(dwh2, mode="max-autotune") # type: ignore
-                pe5_fn = torch.compile(pe5, mode="max-autotune") # type: ignore
+                dwh2_fn = torch.compile(dwh2, mode="max-autotune")  # type: ignore
+                pe5_fn = torch.compile(pe5, mode="max-autotune")  # type: ignore
 
             STRESS_CASES = {"duplicate_cols", "lowrank_noise"}
             STRESS_ELL0 = 1e-6
@@ -331,8 +351,11 @@ def main() -> None:
 
                 ref_q = None
                 ref_obj = None
-                if not args.no_reference:
-                    ref_q, ref_obj = polar_reference(case.a)
+                if args.reference != "none":
+                    ref_dtype = (
+                        torch.float64 if args.reference == "fp64" else torch.float32
+                    )
+                    ref_q, ref_obj = polar_reference(case.a, dtype=ref_dtype)
 
                 # Pre-calculate stress coefficients if needed
                 case_coeffs = coeffs
@@ -340,7 +363,9 @@ def main() -> None:
                     case_coeffs = pe5_coefficients(ell0=case_ell0, steps=5)
 
                 methods: Dict[str, Callable[[], object]] = {
-                    "dwh2": lambda a=case.a, ell=case_ell0: dwh2_fn(a, ell0=ell, tf32=args.tf32),
+                    "dwh2": lambda a=case.a, ell=case_ell0: dwh2_fn(
+                        a, ell0=ell, tf32=args.tf32
+                    ),
                     "pe5": lambda a=case.a, cs=case_coeffs, ell=case_ell0: pe5_fn(
                         a, ell0=ell, coeffs=cs
                     ),
@@ -367,6 +392,7 @@ def main() -> None:
                         trials=args.trials,
                         stats=stats,
                         is_stress=is_stress,
+                        audit=args.audit,
                     )
                     row = json.dumps(asdict(record), sort_keys=True)
                     if not args.quiet:

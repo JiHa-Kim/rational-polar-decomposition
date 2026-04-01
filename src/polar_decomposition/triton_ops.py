@@ -125,7 +125,9 @@ def scale_symmetrize(
     out: torch.Tensor,
 ) -> torch.Tensor:
     if not can_fuse_scale_symmetrize(a, out):
-        raise RuntimeError("Triton scale-symmetrize kernel is unavailable for this input")
+        raise RuntimeError(
+            "Triton scale-symmetrize kernel is unavailable for this input"
+        )
 
     n = a.shape[0]
     grid = (triton.cdiv(n, 32), triton.cdiv(n, 32))

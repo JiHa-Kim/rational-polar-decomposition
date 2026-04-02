@@ -15,6 +15,15 @@ The benchmark is designed to answer three questions as directly as possible:
 
 This repo intentionally avoids oracle inputs such as known singular values.
 
+## Repository layout
+
+The source tree is split by responsibility:
+
+- `src/polar_decomposition/algorithms`: core DWH2 and PE5 implementations.
+- `src/polar_decomposition/utils`: normalization and SPD inverse helpers.
+- `src/polar_decomposition/kernels`: Triton/CUDA-specific fused kernels.
+- `src/polar_decomposition/cli`: benchmark, sweep, and profiling entrypoints.
+
 ## What is implemented
 
 ### DWH2

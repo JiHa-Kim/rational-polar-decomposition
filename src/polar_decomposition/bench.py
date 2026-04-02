@@ -13,6 +13,7 @@ from typing import Callable, Optional
 import torch
 
 from .dwh2 import dwh2
+from .normalization import NormalizationInfo, normalize_matrix
 from .pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
 from .precond import CholStats, PolarResult
 
@@ -27,8 +28,13 @@ class Case:
 class Record:
     case: str
     method: str
+    normalizer: str
     is_stress: bool
     trials: int
+    normalization_raw_scale: float
+    normalization_scale: float
+    normalization_ridge: float
+    normalization_ridge_stat: str
     runtime_ms_median: float
     runtime_ms_min: float
     ortho_fro: float
@@ -153,7 +159,7 @@ def make_case(
 
 
 def normalize_fro(a: torch.Tensor) -> torch.Tensor:
-    return a / (torch.linalg.matrix_norm(a, ord="fro") + PAPER_NORM_EPS)
+    return normalize_matrix(a, method="fro", eps=PAPER_NORM_EPS)[0]
 
 
 def polar_reference(
@@ -276,6 +282,7 @@ def summarize(
     ref: Optional[ReferencePolar],
     times: Sequence[float],
     method: str,
+    normalization: NormalizationInfo,
     trials: int,
     stats: CholStats,
     is_stress: bool,
@@ -318,8 +325,13 @@ def summarize(
     return Record(
         case=case.name,
         method=method,
+        normalizer=normalization.method,
         is_stress=is_stress,
         trials=trials,
+        normalization_raw_scale=normalization.raw_scale,
+        normalization_scale=normalization.scale,
+        normalization_ridge=normalization.ridge,
+        normalization_ridge_stat=normalization.ridge_stat,
         runtime_ms_median=float(statistics.median(times)),
         runtime_ms_min=float(min(times)),
         ortho_fro=ortho_fro,
@@ -361,6 +373,26 @@ def main() -> None:
         help="Compile the algorithmic kernels with torch.compile",
     )
     parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
+    parser.add_argument(
+        "--normalizer",
+        type=str,
+        default="fro",
+        choices=["fro", "schatten4"],
+        help="Input scaling used before running the polar iterations.",
+    )
+    parser.add_argument(
+        "--schatten4-ridge-scale",
+        type=float,
+        default=16.0,
+        help="Diagonal ridge multiplier for Gram-based Schatten-4 scaling.",
+    )
+    parser.add_argument(
+        "--schatten4-ridge-stat",
+        type=str,
+        default="max",
+        choices=["mean", "max"],
+        help="Gram diagonal statistic used to size the Schatten-4 ridge.",
+    )
     parser.add_argument(
         "--reference",
         type=str,
@@ -432,7 +464,7 @@ def main() -> None:
 
             for i, case_name in enumerate(args.cases):
                 is_stress = case_name in STRESS_CASES
-                case_ell0 = STRESS_ELL0 if is_stress else args.ell0
+                pe5_ell0 = STRESS_ELL0 if is_stress else args.ell0
 
                 case = make_case(
                     case_name,
@@ -441,7 +473,14 @@ def main() -> None:
                     device=device,
                     seed=args.seed + 1000 * i,
                 )
-                a = normalize_fro(case.a).contiguous()
+                a, normalization = normalize_matrix(
+                    case.a,
+                    method=args.normalizer,
+                    eps=PAPER_NORM_EPS,
+                    schatten4_ridge_scale=args.schatten4_ridge_scale,
+                    schatten4_ridge_stat=args.schatten4_ridge_stat,
+                )
+                a = a.contiguous()
                 case = Case(name=case.name, a=a)
 
                 ref = None
@@ -455,12 +494,12 @@ def main() -> None:
 
                 # Pre-calculate stress coefficients if needed
                 case_coeffs = coeffs
-                if is_stress and case_ell0 != args.ell0:
-                    case_coeffs = pe5_coefficients(ell0=case_ell0, steps=5)
+                if is_stress and pe5_ell0 != args.ell0:
+                    case_coeffs = pe5_coefficients(ell0=pe5_ell0, steps=5)
 
                 methods: dict[str, Callable[[], object]] = {
-                    "dwh2": lambda a=case.a, ell=case_ell0: dwh2_fn(a, ell0=ell),
-                    "pe5": lambda a=case.a, cs=case_coeffs, ell=case_ell0: pe5_fn(
+                    "dwh2": lambda a=case.a, ell=args.ell0: dwh2_fn(a, ell0=ell),
+                    "pe5": lambda a=case.a, cs=case_coeffs, ell=pe5_ell0: pe5_fn(
                         a, ell0=ell, coeffs=cs
                     ),
                 }
@@ -475,6 +514,7 @@ def main() -> None:
                         ref=ref,
                         times=times,
                         method=method_name,
+                        normalization=normalization,
                         trials=args.trials,
                         stats=out.stats,
                         is_stress=is_stress,

@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 bench = "polar_decomposition.bench:main"
+norm-sweep = "polar_decomposition.norm_sweep:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 
+from .pe5 import PAPER_MUON_ELL
 from .precond import CholStats, PolarResult, spd_inverse_fast, spd_inverse_safe
 from .triton_ops import affine_diag, can_affine_diag
 
@@ -24,7 +25,7 @@ def dwh_coefficients(ell: float) -> tuple[float, float, float, float]:
 def dwh2(
     a: torch.Tensor,
     *,
-    ell0: float = 1e-3,
+    ell0: float = PAPER_MUON_ELL,
     robust: bool = False,
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,
@@ -95,14 +96,12 @@ def dwh2(
                     diag_floor_rel=1e-6,
                 )
 
-        # M_k = alpha*I + beta*inv  (reuse inv buffer)
+        # Large matmul: rectangular update.
         if can_affine_diag(inv, inv):
             affine_diag(inv, inv, alpha=beta, diag_add=alpha)
         else:
             inv.mul_(beta)
             inv.diagonal().add_(alpha)
-
-        # Large matmul: rectangular update
         x = x @ inv
 
     if transposed:

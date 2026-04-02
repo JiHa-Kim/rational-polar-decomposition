@@ -130,9 +130,6 @@ def main() -> None:
     try:
         with torch.inference_mode():
             coeffs = pe5_coefficients(ell0=args.ell0, steps=5)
-            stress_cases = {"duplicate_cols", "lowrank_noise"}
-            stress_ell0 = 1e-6
-
             variants: list[tuple[str, float]] = []
             for method in args.normalizers:
                 if method == "fro":
@@ -142,8 +139,7 @@ def main() -> None:
                     variants.append((method, ridge_scale))
 
             for i, case_name in enumerate(args.cases):
-                is_stress = case_name in stress_cases
-                pe5_ell0 = stress_ell0 if is_stress else args.ell0
+                is_stress = case_name in {"duplicate_cols", "lowrank_noise"}
 
                 raw_case = make_case(
                     case_name,
@@ -153,10 +149,6 @@ def main() -> None:
                     seed=args.seed + 1000 * i,
                 )
                 norm_ref = _reference_norms(raw_case.a)
-
-                case_coeffs = coeffs
-                if is_stress and pe5_ell0 != args.ell0:
-                    case_coeffs = pe5_coefficients(ell0=pe5_ell0, steps=5)
 
                 for normalizer, ridge_scale in variants:
                     a, normalization = normalize_matrix(
@@ -180,7 +172,7 @@ def main() -> None:
 
                     methods: dict[str, Callable[[], object]] = {
                         "dwh2": lambda a=a, ell=args.ell0: dwh2(a, ell0=ell),
-                        "pe5": lambda a=a, cs=case_coeffs, ell=pe5_ell0: pe5(
+                        "pe5": lambda a=a, cs=coeffs, ell=args.ell0: pe5(
                             a, ell0=ell, coeffs=cs
                         ),
                     }

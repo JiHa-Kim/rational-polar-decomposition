@@ -459,12 +459,8 @@ def main() -> None:
                 dwh2_fn = torch.compile(dwh2, mode="max-autotune")  # type: ignore
                 pe5_fn = torch.compile(pe5, mode="max-autotune")  # type: ignore
 
-            STRESS_CASES = {"duplicate_cols", "lowrank_noise"}
-            STRESS_ELL0 = 1e-6
-
             for i, case_name in enumerate(args.cases):
-                is_stress = case_name in STRESS_CASES
-                pe5_ell0 = STRESS_ELL0 if is_stress else args.ell0
+                is_stress = case_name in {"duplicate_cols", "lowrank_noise"}
 
                 case = make_case(
                     case_name,
@@ -492,14 +488,9 @@ def main() -> None:
                     if args.audit and ref.inv_sqrt.is_cuda:
                         torch.cuda.empty_cache()
 
-                # Pre-calculate stress coefficients if needed
-                case_coeffs = coeffs
-                if is_stress and pe5_ell0 != args.ell0:
-                    case_coeffs = pe5_coefficients(ell0=pe5_ell0, steps=5)
-
                 methods: dict[str, Callable[[], object]] = {
                     "dwh2": lambda a=case.a, ell=args.ell0: dwh2_fn(a, ell0=ell),
-                    "pe5": lambda a=case.a, cs=case_coeffs, ell=pe5_ell0: pe5_fn(
+                    "pe5": lambda a=case.a, cs=coeffs, ell=args.ell0: pe5_fn(
                         a, ell0=ell, coeffs=cs
                     ),
                 }

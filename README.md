@@ -86,10 +86,6 @@ $$
 
 by default. This is a design parameter, not an oracle estimate.
 
-For apples-to-apples comparison with the earlier stress tests, the benchmark
-harness still uses `pe5_ell0 = 1e-6` on `duplicate_cols` and `lowrank_noise`.
-DWH2 stays on the fixed CLI value.
-
 ### Alternative normalizers
 
 The CLI also supports a Gram-based Schatten-4 normalizer:
@@ -106,13 +102,13 @@ $$
 
 instead of materializing the ridged Gram.
 
-Fresh corrected sweep on this machine:
+Fresh corrected sweep on this machine with the shared `ell0 = 1e-3` setting:
 
-- sweep command: `uv run norm-sweep --device cuda --tf32 --quiet --output runs/norm_sweep_current_20260402.jsonl`
+- sweep command: `uv run norm-sweep --device cuda --tf32 --quiet --output runs/norm_sweep_current_20260402_fair.jsonl`
 - shape: 16384 x 4096
 - normalizer candidate: `--normalizer schatten4 --schatten4-ridge-scale 16 --schatten4-ridge-stat max`
 - conservatism: `0/22` underestimates vs true spectral norm in the method-case comparison, with minimum estimated/true spectral ratio `1.00000776`
-- quality impact: improved `q_fro_error` on `2/11` DWH2 cases and `6/11` PE5 cases
+- quality impact: improved `q_fro_error` on `2/11` DWH2 cases and `5/11` PE5 cases
 
 So the current default remains `fro`; use `norm-sweep` to evaluate alternative
 normalizers if you want to retune that tradeoff.
@@ -175,9 +171,10 @@ The audit path is intentionally low-memory. Instead of forming a tall float64 SV
 
 ## Final benchmark report
 
-Fresh current-`HEAD` benchmark on this machine:
+Fresh current-`HEAD` benchmark on this machine with the shared `ell0 = 1e-3`
+setting for both methods:
 
-- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_current_serial_20260402.jsonl`
+- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_current_serial_20260402_fair.jsonl`
 - shape: 16384 x 4096
 - cases: 11 default cases
 - measurement: warmup=1, trials=3
@@ -186,8 +183,8 @@ Fresh current-`HEAD` benchmark on this machine:
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **393.67 ms** | **0.02810** | **0.19372** |
-| `pe5` | 666.69 ms | 0.09089 | 0.39122 |
+| `dwh2` | **393.36 ms** | **0.02810** | **0.19372** |
+| `pe5` | 665.50 ms | 0.08958 | 0.39122 |
 
 `dwh2` is 1.69x faster by median runtime and lower on `q_fro_error` in 11/11 cases.
 
@@ -197,17 +194,17 @@ if you want the projected-objective comparison.
 
 | Case | DWH2 ms | PE5 ms | Speedup | DWH2 `q_fro_error` | PE5 `q_fro_error` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `adversarial_condition` | **398.11** | 674.81 | 1.70x | **0.06084** | 0.12411 |
-| `ar1_cols` | **387.50** | 658.80 | 1.70x | **0.10788** | 0.23699 |
-| `duplicate_cols` | **392.41** | 666.12 | 1.70x | **0.02119** | 0.19284 |
-| `gaussian` | **390.37** | 660.72 | 1.69x | **0.02810** | 0.08953 |
-| `heavy_tail_t` | **396.51** | 702.64 | 1.77x | **0.02758** | 0.09026 |
-| `ill_conditioned` | **393.67** | 668.07 | 1.70x | **0.12111** | 0.19181 |
-| `lognormal_cols` | **391.37** | 663.48 | 1.70x | **0.15271** | 0.25344 |
-| `lowrank_noise` | **392.62** | 666.69 | 1.70x | **0.01455** | 0.09089 |
-| `orthogonal_noisy` | **396.19** | 673.52 | 1.70x | **0.03179** | 0.04190 |
-| `rank_1_heavy` | **396.08** | 671.53 | 1.70x | **0.01344** | 0.01457 |
-| `sparse_like` | **412.44** | 663.54 | 1.61x | **0.02801** | 0.08958 |
+| `adversarial_condition` | **407.19** | 686.16 | 1.69x | **0.06084** | 0.12411 |
+| `ar1_cols` | **387.94** | 656.55 | 1.69x | **0.10788** | 0.23699 |
+| `duplicate_cols` | **391.58** | 664.92 | 1.70x | **0.02119** | 0.03824 |
+| `gaussian` | **386.76** | 661.60 | 1.71x | **0.02810** | 0.08953 |
+| `heavy_tail_t` | **397.33** | 670.44 | 1.69x | **0.02758** | 0.09026 |
+| `ill_conditioned` | **393.36** | 667.58 | 1.70x | **0.12111** | 0.19181 |
+| `lognormal_cols` | **388.94** | 661.38 | 1.70x | **0.15271** | 0.25344 |
+| `lowrank_noise` | **393.46** | 665.50 | 1.69x | **0.01455** | 0.02087 |
+| `orthogonal_noisy` | **395.65** | 671.26 | 1.70x | **0.03179** | 0.04190 |
+| `rank_1_heavy` | **395.95** | 693.87 | 1.75x | **0.01344** | 0.01457 |
+| `sparse_like` | **387.99** | 663.53 | 1.71x | **0.02801** | 0.08958 |
 
 Detailed per-operation breakdown for DWH2 on the 16384 x 4096 Gaussian case:
 
@@ -216,22 +213,22 @@ Detailed per-operation breakdown for DWH2 on the 16384 x 4096 Gaussian case:
 
 | Operation                           | Aggregate (ms) | Count | Per-op (ms) | Share (%) |
 | :---------------------------------- | -------------: | ----: | ----------: | --------: |
-| **GEMM 4096x16384x4096**            |       167.3036 |   2.0 |     83.6518 |    36.41% |
-| **GEMM 16384x4096x4096**            |       144.0689 |   2.0 |     72.0344 |    31.35% |
-| **Cholesky (small-side)**           |        71.6286 |   4.0 |     17.9072 |    15.59% |
-| **GEMM 4096x4096x4096**             |        36.9212 |   2.0 |     18.4606 |     8.04% |
-| Memory / Element-wise               |        13.6238 | 192.0 |      0.0710 |     2.96% |
-| **Triangular Solve (small-side)**   |         5.1873 |  16.0 |      0.3242 |     1.13% |
+| **GEMM 4096x16384x4096**            |       167.3036 |     2 |     83.6518 |    36.41% |
+| **GEMM 16384x4096x4096**            |       144.0689 |     2 |     72.0344 |    31.35% |
+| **Cholesky (small-side)**           |        71.6286 |     4 |     17.9072 |    15.59% |
+| **GEMM 4096x4096x4096**             |        36.9212 |     2 |     18.4606 |     8.04% |
+| Memory / Element-wise               |        13.6238 |   192 |      0.0710 |     2.96% |
+| **Triangular Solve (small-side)**   |         5.1873 |    16 |      0.3242 |     1.13% |
 
 Detailed per-operation breakdown for PE5 (16384 x 4096, 5 iterations):
 
 | Operation                           | Aggregate (ms) | Count | Per-op (ms) | Share (%) |
 | :---------------------------------- | -------------: | ----: | ----------: | --------: |
-| **GEMM 4096x4096x4096**             |       381.8374 |  20.0 |     19.0919 |    52.71% |
-| **GEMM 4096x16384x4096**            |       166.9725 |   2.0 |     83.4863 |    23.05% |
-| **GEMM 16384x4096x4096**            |       153.0491 |   2.0 |     76.5246 |    21.13% |
-| Memory / Element-wise               |        18.7676 |  32.0 |      0.5865 |     2.59% |
-| Other overhead                      |         3.8470 |   1.0 |      3.8470 |     0.53% |
+| **GEMM 4096x4096x4096**             |       381.8374 |    20 |     19.0919 |    52.71% |
+| **GEMM 4096x16384x4096**            |       166.9725 |     2 |     83.4863 |    23.05% |
+| **GEMM 16384x4096x4096**            |       153.0491 |     2 |     76.5246 |    21.13% |
+| Memory / Element-wise               |        18.7676 |    32 |      0.5865 |     2.59% |
+| Other overhead                      |         3.8470 |     1 |      3.8470 |     0.53% |
 
 The profile picture is consistent with the benchmark table: DWH2 is dominated by
 two rectangular updates plus two small-side solves, while PE5 spends most of

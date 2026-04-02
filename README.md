@@ -243,6 +243,5 @@ If you only need `q_fro_error` and `objective_ratio`, `--reference fp32` already
 - `precond.py`: SPD inverse stack with fast recursive/solve paths and safe retry path. Shared `PolarResult` type.
 - `triton_ops.py`: optional Triton kernels for small-side symmetrization and affine-diagonal updates.
 - `bench.py`: realistic benchmark driver and JSONL logging.
-- `profile_gpu.py`: GPU profiler with `torch.profiler` trace export.
-- `profile_detailed.py`: detailed GPU profiling script for per-op breakdown and frequency.
+- `profile_gpu.py`: GPU profiler with Chrome trace and detailed per-op breakdown.
 - `README.md`: this file.

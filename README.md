@@ -193,6 +193,17 @@ Fresh current-`HEAD` DWH2 profile on the same 16384 x 4096 Gaussian case:
 | Triton affine kernel | 8.84 ms | 0.76% |
 | Triton scale/sym kernel | 6.50 ms | 0.56% |
 
+Detailed per-operation breakdown for DWH2 (16384 x 4096, single iteration):
+
+| Operation | Total (per run) | Count | Per-op Latency |
+| :--- | ---: | ---: | ---: |
+| **Rectangular GEMM** | **315.8 ms** | 6.0 | **52.63 ms** |
+| Small-side GEMM | 55.1 ms | 58.0 | 0.95 ms |
+| Cholesky | 32.8 ms | 4.0 | 8.22 ms |
+| Memory / Element-wise | 11.0 ms | 192.0 | 0.05 ms |
+| Triangular Solve | 5.5 ms | 16.0 | 0.34 ms |
+| Triton (Affine/Sym) | 5.1 ms | 6.0 | 0.85 ms |
+
 ## Run
 
 Default run:
@@ -233,4 +244,5 @@ If you only need `q_fro_error` and `objective_ratio`, `--reference fp32` already
 - `triton_ops.py`: optional Triton kernels for small-side symmetrization and affine-diagonal updates.
 - `bench.py`: realistic benchmark driver and JSONL logging.
 - `profile_gpu.py`: GPU profiler with `torch.profiler` trace export.
+- `profile_detailed.py`: detailed GPU profiling script for per-op breakdown and frequency.
 - `README.md`: this file.

@@ -153,8 +153,7 @@ def _smallside_inverse_from_factor(
 ) -> torch.Tensor:
     out.zero_()
     out.diagonal().fill_(1.0)
-    torch.linalg.solve_triangular(l, out, upper=False, left=True, out=out)
-    torch.linalg.solve_triangular(l.mT, out, upper=True, left=True, out=out)
+    out.copy_(torch.cholesky_solve(out, l))
     out.mul_(s[:, None]).mul_(s[None, :])
     return out
 
@@ -168,7 +167,8 @@ def _smallside_solve_from_factor(
 ) -> torch.Tensor:
     out.copy_(rhs)
     out.mul_(s[:, None])
-    out.copy_(torch.cholesky_solve(out, l))
+    torch.linalg.solve_triangular(l, out, upper=False, left=True, out=out)
+    torch.linalg.solve_triangular(l.mT, out, upper=True, left=True, out=out)
     out.mul_(s[:, None])
     return out
 
@@ -409,7 +409,12 @@ def _dwh2_smallside_bounded(
     k.copy_(h).mul_(-1.0)
     k.diagonal().add_(1.0)
     torch.mm(k, m_acc, out=buf)
-    torch.mm(m_acc, buf, out=k)
+    # Evaluate M @ buf as alpha * buf + beta * (H @ buf) so the large identity
+    # contribution stays in exact scalar arithmetic and only the bounded H part
+    # goes through TF32 matmul.
+    torch.mm(h, buf, out=k)
+    buf.mul_(alpha0)
+    k.mul_(beta0).add_(buf)
     k.mul_(delta_scale)
     k.add_(h)
     _symmetrize_(k, scratch)

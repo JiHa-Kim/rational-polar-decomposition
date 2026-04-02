@@ -14,12 +14,14 @@ The current `smallside_bounded` mode in [dwh2.py](../src/polar_decomposition/alg
 - forms `H0 = (I + c0 G0)^(-1)` from a Cholesky factor
 - uses the bounded recurrence
   `K = H0 + (c1 / c0) M0 (I - H0) M0`
+- evaluates the second bounded `K`-build multiply as
+  `alpha * buf + beta * (H @ buf)` instead of a raw `M @ buf`
 - applies the second solve as two triangular solves
 
 Integrated 11-case sweep at `16384 x 4096`, `seed=0`, `spectral_bound` normalization:
 
-- `rectangular` median runtime: `391.35 ms`
-- `smallside_bounded` median runtime: `374.03 ms`
+- `rectangular` median runtime: `390.09 ms`
+- `smallside_bounded` median runtime: `374.91 ms`
 - faster on `11/11`
 - better `q_fro_error` on `8/11`
 - remaining worse cases: `rank_1_heavy`, `lowrank_noise`, `ar1_cols`
@@ -72,6 +74,17 @@ On the same small Gram:
 
 This is the most important current diagnosis.
 
+More specifically, the hard-case gap is dominated by the bounded small-side
+matmuls, not by the second solve backend:
+
+- on the same small Gram, replacing the second `cholesky_solve` with two
+  triangular solves alone was essentially neutral on the hard rows
+- on the same small Gram, turning the bounded evaluator matmuls back to TF32
+  recreated most of the loss immediately
+
+For `ar1_cols`, the main bad actor is the `K`-build itself. The final
+small-side affine multiply is comparatively minor there.
+
 ### 5. The first inverse and the second solve want different kernels.
 
 The best branch-free split so far is:
@@ -91,6 +104,8 @@ Why:
 - no unconditional Cholesky jitter in the good path
 - accurate first inverse, faster second solve
 - explicit symmetrization of the small-side SPD states
+- affine decomposition of the second bounded `K`-build multiply:
+  `M @ buf = alpha * buf + beta * (H @ buf)`
 
 ## What Did Not Help Enough
 
@@ -103,6 +118,99 @@ Why:
   the isolated tests show that was not the main cause
 - blaming the problem on the TF32 Gram build
   the measured Gram error is too small to explain the final gap
+
+## Additional failed rewrites
+
+These are worth recording because they looked principled on paper but were not
+actually viable.
+
+### Cubic-in-$T$ rewrite of the bounded step
+
+Using
+
+$$
+T = I - H,\qquad
+K = I + c_1 T + c_2 T^2 + c_3 T^3
+$$
+
+is algebraically equivalent to the bounded `K` update and keeps the same two
+small-side matmuls. In TF32, however, it lost SPD on the hard rows and the
+subsequent Cholesky failed.
+
+Conclusion:
+
+- mathematically elegant
+- not numerically acceptable in the current low-precision regime
+
+### $M^2 T$ or $T M^2$ rewrite
+
+Since `M` and `T` commute in exact arithmetic, another natural idea was to form
+`M^2` first and then multiply by `T`.
+
+That also lost SPD on the hard rows in TF32 and failed the next Cholesky.
+
+Conclusion:
+
+- exact commutation is not enough
+- forcing a “more symmetric” rewrite can still be worse numerically
+
+### Symmetrizing the first `T M` intermediate
+
+The intermediate product `T M` is symmetric in exact arithmetic, so explicitly
+symmetrizing it looked like a cheap way to suppress TF32 commutation drift.
+
+In practice it was catastrophic on the hard rows:
+
+- `rank_1_heavy`, `ar1_cols`, and `lowrank_noise` all became much worse
+
+Conclusion:
+
+- the intermediate should not be projected back to symmetry that way
+- the current bounded form is already closer to the right structure than that
+  “fix”
+
+## Current best structural fix
+
+The best low-cost improvement so far is to rewrite the second bounded `K`-build
+multiply
+
+$$
+M\,\mathrm{buf}
+$$
+
+as
+
+$$
+\alpha\,\mathrm{buf} + \beta(H\,\mathrm{buf}),
+\qquad
+M = \alpha I + \beta H.
+$$
+
+This matters because the large identity contribution is then handled exactly in
+scalar arithmetic, and only the bounded `H @ buf` term goes through TF32.
+
+Empirical effect on the integrated `smallside_bounded` kernel:
+
+- keeps the all-case speed win against `rectangular`
+- improves the remaining correlated-hard cases slightly without introducing
+  routing or site-wide FP32
+
+Latest 11-case sweep at `16384 x 4096`, `seed=0`, `spectral_bound`:
+
+- `rectangular` median runtime: `390.09 ms`
+- `smallside_bounded` median runtime: `374.91 ms`
+- faster on `11/11`
+- better `q_fro_error` on `8/11`
+
+Representative rows:
+
+- `ar1_cols`: `0.03585 -> 0.03508` versus the previous bounded variant
+- `lowrank_noise`: `0.10528 -> 0.10510`
+- `rank_1_heavy`: `0.01594 -> 0.01589`
+
+This does not fully close the remaining `rank_1_heavy` gap to the rectangular
+kernel, but it is currently the best speed/quality tradeoff found without
+introducing brittle branching or broad FP32 fallback.
 
 ## Hard-Case Interpretation
 
@@ -125,6 +233,61 @@ In order of priority:
 
 3. Only if needed, isolate one specific small-side multiply for higher precision.
    This is acceptable only if it is a single structural hotspot, not a pile of per-case branches.
+
+## Potential Structural Improvements
+
+These are the most plausible next ideas that still fit the current design goals.
+
+### 1. Pull more identity mass out of TF32 matmuls
+
+The latest affine rewrite helped because it kept the large identity term out of
+the matmul path. The same principle may still apply to the remaining bounded
+products.
+
+What to look for:
+
+- rewrites where TF32 only sees bounded operators like `H` or `I - H`
+- affine decompositions that avoid multiplying by `alpha I + beta H` directly
+
+Why it is promising:
+
+- it directly targets the confirmed hotspot
+- it is branch-free
+- it preserves the same algorithmic map in exact arithmetic
+
+### 2. Reparameterize the bounded state around a contractive variable
+
+`H` and `T = I - H` both stay bounded, while the old explicit Gram-like state
+did not. A better parameterization of the second bounded step may reduce TF32
+damage further if it keeps all intermediate spectra in a compact interval.
+
+What to look for:
+
+- recurrences written only in `H` and `T`
+- equivalent forms whose intermediate matrices remain PSD or contractive by
+  construction
+
+Why it is promising:
+
+- it is structural rather than heuristic
+- it attacks the remaining sensitivity without fallback branches
+
+### 3. Replace one raw matmul with a factor-apply if it stays cheap
+
+The bounded mode already uses the right split for solves: accurate first
+inverse, fast second apply. One remaining possibility is to replace a single
+fragile matmul site by a factor-based apply that is still cheaper than broad
+FP32 promotion.
+
+What to look for:
+
+- one small-side hotspot where factor application is measurably better than TF32
+- a replacement that does not introduce retries or case routing
+
+Why it is promising:
+
+- it stays surgical
+- it may recover the last hard rows without giving back the speed win
 
 ## Current Working Rule
 

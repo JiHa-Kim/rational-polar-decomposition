@@ -31,20 +31,12 @@ def _reference_norms(a: torch.Tensor) -> dict[str, float]:
     gram = x64.mT @ x64
     gram = 0.5 * (gram + gram.mT)
     fro = float(torch.sqrt(torch.trace(gram)).item())
-    schatten4 = float(torch.sqrt(torch.linalg.matrix_norm(gram, ord="fro")).item())
     evals = torch.linalg.eigvalsh(gram)
     spectral = math.sqrt(max(float(evals[-1].item()), 0.0))
     return {
         "true_fro": fro,
-        "true_schatten4": schatten4,
         "true_spectral": spectral,
     }
-
-
-def _normalizer_label(method: str, ridge_scale: float, ridge_stat: str) -> str:
-    if method == "fro":
-        return "fro"
-    return f"schatten4_{ridge_stat}_r{ridge_scale:g}"
 
 
 def main() -> None:
@@ -100,20 +92,8 @@ def main() -> None:
     parser.add_argument(
         "--normalizers",
         nargs="+",
-        default=["fro", "schatten4"],
-        choices=["fro", "schatten4"],
-    )
-    parser.add_argument(
-        "--schatten4-ridge-scales",
-        nargs="+",
-        type=float,
-        default=[0.0, 4.0, 8.0, 16.0, 32.0],
-    )
-    parser.add_argument(
-        "--schatten4-ridge-stat",
-        type=str,
-        default="max",
-        choices=["mean", "max"],
+        default=["fro", "spectral_bound"],
+        choices=["fro", "spectral_bound"],
     )
     parser.add_argument(
         "--output",
@@ -130,13 +110,7 @@ def main() -> None:
     try:
         with torch.inference_mode():
             coeffs = pe5_coefficients(ell0=args.ell0, steps=5)
-            variants: list[tuple[str, float]] = []
-            for method in args.normalizers:
-                if method == "fro":
-                    variants.append((method, 0.0))
-                    continue
-                for ridge_scale in args.schatten4_ridge_scales:
-                    variants.append((method, ridge_scale))
+            variants = list(args.normalizers)
 
             for i, case_name in enumerate(args.cases):
                 is_stress = case_name in {"duplicate_cols", "lowrank_noise"}
@@ -150,13 +124,11 @@ def main() -> None:
                 )
                 norm_ref = _reference_norms(raw_case.a)
 
-                for normalizer, ridge_scale in variants:
+                for normalizer in variants:
                     a, normalization = normalize_matrix(
                         raw_case.a,
                         method=normalizer,
                         eps=PAPER_NORM_EPS,
-                        schatten4_ridge_scale=ridge_scale,
-                        schatten4_ridge_stat=args.schatten4_ridge_stat,
                     )
                     a = a.contiguous()
                     case = Case(name=raw_case.name, a=a)
@@ -203,16 +175,9 @@ def main() -> None:
                         row = {
                             **base,
                             **norm_ref,
-                            "normalizer": _normalizer_label(
-                                normalizer, ridge_scale, args.schatten4_ridge_stat
-                            ),
-                            "schatten4_ridge_scale": ridge_scale,
-                            "schatten4_ridge_stat": normalization.ridge_stat,
+                            "normalizer": normalizer,
                             "est_over_true_fro": scale / norm_ref["true_fro"],
-                            "est_over_true_schatten4": scale
-                            / norm_ref["true_schatten4"],
                             "est_over_true_spectral": scale / norm_ref["true_spectral"],
-                            "under_true_schatten4": scale < norm_ref["true_schatten4"],
                             "under_true_spectral": scale < norm_ref["true_spectral"],
                         }
                         line = json.dumps(row)

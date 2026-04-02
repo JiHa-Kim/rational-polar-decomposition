@@ -33,8 +33,6 @@ class Record:
     trials: int
     normalization_raw_scale: float
     normalization_scale: float
-    normalization_ridge: float
-    normalization_ridge_stat: str
     runtime_ms_median: float
     runtime_ms_min: float
     ortho_fro: float
@@ -162,6 +160,11 @@ def normalize_fro(a: torch.Tensor) -> torch.Tensor:
     return normalize_matrix(a, method="fro", eps=PAPER_NORM_EPS)[0]
 
 
+def _scaled_eig_cutoff(evals: torch.Tensor, *, dtype: torch.dtype) -> float:
+    scale = max(float(evals[-1].item()), float(torch.finfo(dtype).tiny))
+    return float(torch.finfo(dtype).eps) * scale
+
+
 def polar_reference(
     a: torch.Tensor, dtype: torch.dtype = torch.float32
 ) -> ReferencePolar:
@@ -174,7 +177,7 @@ def polar_reference(
     g = x_ref.mT @ x_ref
     g = 0.5 * (g + g.mT)
     evals, evecs = torch.linalg.eigh(g)
-    cutoff = float(torch.finfo(dtype).eps) * max(float(evals.max().item()), 1.0)
+    cutoff = _scaled_eig_cutoff(evals, dtype=dtype)
     safe_evals = evals.clamp_min(cutoff)
     inv_scale = torch.rsqrt(safe_evals)
     inv_sqrt = (evecs * inv_scale[None, :]) @ evecs.mT
@@ -245,7 +248,7 @@ def _projected_objective_ratio(
 
     gram = 0.5 * (gram + gram.mT)
     evals, evecs = torch.linalg.eigh(gram)
-    cutoff = float(torch.finfo(torch.float64).eps) * max(float(evals.max().item()), 1.0)
+    cutoff = _scaled_eig_cutoff(evals, dtype=torch.float64)
     evals.clamp_min_(cutoff)
     inv_sqrt = (evecs * torch.rsqrt(evals)[None, :]) @ evecs.mT
     objective_proj_val = float(torch.einsum("ij,ji->", inv_sqrt, cross).item())
@@ -330,8 +333,6 @@ def summarize(
         trials=trials,
         normalization_raw_scale=normalization.raw_scale,
         normalization_scale=normalization.scale,
-        normalization_ridge=normalization.ridge,
-        normalization_ridge_stat=normalization.ridge_stat,
         runtime_ms_median=float(statistics.median(times)),
         runtime_ms_min=float(min(times)),
         ortho_fro=ortho_fro,
@@ -376,22 +377,9 @@ def main() -> None:
     parser.add_argument(
         "--normalizer",
         type=str,
-        default="fro",
-        choices=["fro", "schatten4"],
+        default="spectral_bound",
+        choices=["fro", "spectral_bound"],
         help="Input scaling used before running the polar iterations.",
-    )
-    parser.add_argument(
-        "--schatten4-ridge-scale",
-        type=float,
-        default=16.0,
-        help="Diagonal ridge multiplier for Gram-based Schatten-4 scaling.",
-    )
-    parser.add_argument(
-        "--schatten4-ridge-stat",
-        type=str,
-        default="max",
-        choices=["mean", "max"],
-        help="Gram diagonal statistic used to size the Schatten-4 ridge.",
     )
     parser.add_argument(
         "--reference",
@@ -473,8 +461,6 @@ def main() -> None:
                     case.a,
                     method=args.normalizer,
                     eps=PAPER_NORM_EPS,
-                    schatten4_ridge_scale=args.schatten4_ridge_scale,
-                    schatten4_ridge_stat=args.schatten4_ridge_stat,
                 )
                 a = a.contiguous()
                 case = Case(name=case.name, a=a)

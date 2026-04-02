@@ -84,14 +84,8 @@ def main() -> None:
     parser.add_argument("--symmetrize-pe5", action="store_true")
     parser.add_argument(
         "--normalizer",
-        choices=["fro", "schatten4"],
-        default="fro",
-    )
-    parser.add_argument("--schatten4-ridge-scale", type=float, default=16.0)
-    parser.add_argument(
-        "--schatten4-ridge-stat",
-        choices=["mean", "max"],
-        default="max",
+        choices=["fro", "spectral_bound"],
+        default="spectral_bound",
     )
     args = parser.parse_args()
 
@@ -103,8 +97,6 @@ def main() -> None:
         case.a,
         method=args.normalizer,
         eps=PAPER_NORM_EPS,
-        schatten4_ridge_scale=args.schatten4_ridge_scale,
-        schatten4_ridge_stat=args.schatten4_ridge_stat,
     )
     a = a.contiguous()
 

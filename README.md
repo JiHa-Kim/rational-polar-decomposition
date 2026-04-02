@@ -40,6 +40,13 @@ X_{k+1} = X_k M_k, \quad M_k = \alpha_k I + \beta_k (I + c_k G_k)^{-1},
 $$
 
 where $G_k = X_k^\top X_k$ and $\alpha_k = b_k/c_k$, $\beta_k = a_k - \alpha_k$.
+This is algebraically the same as the paper's
+
+$$
+X_{k+1} = X_k (a_k I + b_k G_k)(I + c_k G_k)^{-1},
+$$
+
+just rewritten to avoid explicitly forming the `(a_k I + b_k G_k)` factor.
 
 **Rectangular recomputation.** The current kernel recomputes the small-side Gram from the actual iterate each step,
 

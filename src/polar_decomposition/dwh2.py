@@ -96,7 +96,8 @@ def dwh2(
                     diag_floor_rel=1e-6,
                 )
 
-        # Large matmul: rectangular update.
+        # Paper form: (aI + bG)(I + cG)^{-1}. We rewrite it as
+        # alpha I + beta (I + cG)^{-1} with alpha = b/c and beta = a - b/c.
         if can_affine_diag(inv, inv):
             affine_diag(inv, inv, alpha=beta, diag_add=alpha)
         else:

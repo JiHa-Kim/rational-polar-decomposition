@@ -80,12 +80,7 @@ def main() -> None:
     parser.add_argument("--trace-dir", type=str, default="profiles")
     parser.add_argument("--tf32", action="store_true")
     parser.add_argument("--robust-dwh2", action="store_true")
-    parser.add_argument(
-        "--dwh2-fixed-ell0",
-        type=float,
-        default=None,
-        help="Disable DWH2 step-0 auto-routing and use a fixed ell0 instead.",
-    )
+    parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
     parser.add_argument("--symmetrize-pe5", action="store_true")
     parser.add_argument(
         "--normalizer",
@@ -118,10 +113,7 @@ def main() -> None:
     if args.method == "dwh2":
 
         def base(x):
-            kwargs = {"robust": args.robust_dwh2}
-            if args.dwh2_fixed_ell0 is not None:
-                kwargs["ell0"] = args.dwh2_fixed_ell0
-            return dwh2(x, **kwargs)
+            return dwh2(x, ell0=args.ell0, robust=args.robust_dwh2)
     else:
 
         def base(x):
@@ -196,39 +188,49 @@ def main() -> None:
 
         for event in prof.key_averages(group_by_input_shape=True):
             name = event.key
-            # Avoid double-counting kernels and their CPU launchers
+            # Use 'device_time_total' for high-level aten ops to capture kernel work
+            # and 'self_device_time_total' for leaf-level kernels/nodes.
+            is_aten = name.startswith("aten::")
+            time_us = (
+                getattr(event, "device_time_total", 0)
+                if is_aten
+                else getattr(event, "self_device_time_total", 0)
+            )
+            if time_us == 0 and device.type == "cpu":
+                time_us = event.cpu_time_total if is_aten else event.self_cpu_time_total
+
+            count = event.count
+
+            # Avoid double-counting high-level dispatcher ops and their aten::mm children
+            if name in {"aten::matmul"}:
+                continue
+
+            # Filtering to relevant ops
             if not (
-                name.startswith("aten::")
+                is_aten
                 or "affine_diag" in name.lower()
                 or "scale_symmetrize" in name.lower()
                 or "cholesky" in name.lower()
             ):
                 continue
 
-            time_us = getattr(event, "self_device_time_total", 0)
-            if time_us == 0 and device.type == "cpu":
-                time_us = event.self_cpu_time_total
-
-            count = event.count
-
-            if name.startswith("aten::mm") or name.startswith("aten::matmul"):
+            if name.startswith("aten::mm"):
                 shapes = event.input_shapes
-                is_rect = False
-                if shapes:
-                    for s in shapes:
-                        if args.rows in s:
-                            is_rect = True
-                            break
-                bucket = "Rectangular GEMM" if is_rect else "Small-side GEMM"
+                if shapes and len(shapes) >= 2:
+                    s1, s2 = shapes[0], shapes[1]
+                    m, k, n = s1[0], s1[1], s2[1]
+                    bucket = f"GEMM {m}x{k}x{n}"
+                else:
+                    bucket = "GEMM (other)"
                 s = get_stat(bucket)
                 s.total_time_us += time_us
                 s.count += count
             elif "cholesky" in name.lower():
-                s = get_stat("Cholesky")
+                s = get_stat("Cholesky (small-side)")
                 s.total_time_us += time_us
                 s.count += count
             elif "solve_triangular" in name.lower():
-                s = get_stat("Triangular Solve")
+                s = get_stat("Triangular Solve (small-side)")
                 s.total_time_us += time_us
                 s.count += count
             elif "affine_diag" in name.lower():
@@ -257,18 +259,21 @@ def main() -> None:
         total_ms = sum(s.total_time_ms for s in stats.values())
         print(f"\n=== Detailed Per-Op Breakdown ({args.method.upper()}) ===")
         print(
-            f"{'Operation':<30} | {'Total (ms)':>10} | {'Count':>7} | {'Per-op (ms)':>12} | {'Share (%)':>10}"
+            f"{'Operation':<35} | {'Aggregate (ms)':>15} | {'Count':>7} | {'Per-op (ms)':>12} | {'Share (%)':>10}"
         )
-        print("-" * 80)
+        print("-" * 90)
+        # Sort by total time, but keep GEMMs together ideally (sorting handles this well enough naturally)
         for s in sorted(stats.values(), key=lambda x: x.total_time_us, reverse=True):
             if s.total_time_us == 0:
                 continue
             share = (s.total_time_ms / total_ms) * 100
+            # Normalize aggregate time to one 'fn(a)' call
+            agg_per_run = s.total_time_ms / profile_iters
+            # Normalize count to one 'fn(a)' call
             count_per_run = s.count / profile_iters
-            # If it's a whole number, show as integer
             count_str = f"{int(count_per_run)}" if count_per_run.is_integer() else f"{count_per_run:.1f}"
             print(
-                f"{s.name:<30} | {s.total_time_ms / profile_iters:>10.2f} | {count_str:>7} | {s.mean_time_ms:>12.4f} | {share:>10.2f}%"
+                f"{s.name:<35} | {agg_per_run:>15.4f} | {count_str:>7} | {s.mean_time_ms:>12.4f} | {share:>10.2f}%"
             )
 
 

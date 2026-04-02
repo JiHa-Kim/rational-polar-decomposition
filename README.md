@@ -177,32 +177,31 @@ if you want the projected-objective comparison.
 | `rank_1_heavy` | **395.25** | 672.54 | 1.70x | **0.01331** | 0.01443 |
 | `sparse_like` | **388.20** | 662.47 | 1.71x | **0.02801** | 0.08958 |
 
-Fresh current-`HEAD` DWH2 profile on the same 16384 x 4096 Gaussian case:
+Detailed per-operation DWH2 profile for DWH2 on the 16384 x 4096 Gaussian case:
 
-- profile basis: eager mode, 1 warm-up call, 3 profiled iterations
-- timed median from the same run: 388.28 ms
-- grouping rule: `aten::mm` split by input shape into tall rectangular GEMMs vs small-side square GEMMs
-- table values below are aggregate self CUDA time across the 3 profiled iterations
+- profile basis: eager mode, 2 warm-up calls, 5 profiled iterations
+- grouping rule: `aten::mm` split by exact input shapes; inclusive `device_time_total` for high-level nodes
 
-| DWH2 Hot Path Bucket | Self CUDA Time | Share |
-| --- | ---: | ---: |
-| **Rectangular GEMM** | **879.32 ms** | **76.09%** |
-| Small-side square GEMM | 153.52 ms | 13.29% |
-| Cholesky | 92.08 ms | 7.97% |
-| Triangular solve | 15.32 ms | 1.33% |
-| Triton affine kernel | 8.84 ms | 0.76% |
-| Triton scale/sym kernel | 6.50 ms | 0.56% |
+| Operation                           | Aggregate (ms) | Count | Per-op (ms) | Share (%) |
+| :---------------------------------- | -------------: | ----: | ----------: | --------: |
+| **GEMM 4096x16384x4096**            |       241.4122 |   2.0 |    120.7061 |    36.01% |
+| **GEMM 16384x4096x4096**            |       216.9831 |   2.0 |    108.4915 |    32.37% |
+| **Triangular Solve (small-side)**   |        99.5103 |   4.0 |     24.8776 |    14.85% |
+| **Cholesky (small-side)**           |        84.5002 |   4.0 |     21.1251 |    12.84% |
+| Memory / Element-wise               |        21.8806 |  40.0 |      0.5470 |     3.33% |
+| Other overhead                      |         2.9031 |  14.0 |      0.2122 |     0.44% |
 
-Detailed per-operation breakdown for DWH2 (16384 x 4096, single iteration):
+Detailed per-operation breakdown for PE5 (16384 x 4096, 5 iterations):
 
-| Operation | Total (per run) | Count | Per-op Latency |
-| :--- | ---: | ---: | ---: |
-| **Rectangular GEMM** | **315.8 ms** | 6 | **52.63 ms** |
-| Small-side GEMM | 55.1 ms | 58 | 0.95 ms |
-| Cholesky | 32.8 ms | 4 | 8.22 ms |
-| Memory / Element-wise | 11.0 ms | 192 | 0.05 ms |
-| Triangular Solve | 5.5 ms | 16 | 0.34 ms |
-| Triton (Affine/Sym) | 5.1 ms | 6 | 0.85 ms |
+| Operation                           | Aggregate (ms) | Count | Per-op (ms) | Share (%) |
+| :---------------------------------- | -------------: | ----: | ----------: | --------: |
+| **GEMM 4096x4096x4096**            |       681.9190 |  20.0 |     34.0960 |    59.92% |
+| **GEMM 16384x4096x4096**            |       220.5398 |   2.0 |    110.2699 |    19.38% |
+| **GEMM 4096x16384x4096**            |       214.6005 |   2.0 |    107.3003 |    18.86% |
+| Memory / Element-wise               |        17.4540 |  32.0 |      0.5454 |     1.53% |
+| Other overhead                      |         3.4432 |   1.0 |      3.4432 |     0.30% |
+
+**Note on Ratios**: With the profiling artifact fixed, the observed latency ratio between rectangular expansion ($16k \times 4k \times 4k$) and small-side square ($4k^3$) is **~3.2x**. This is physically consistent with the $4\times$ change in FLOPs, as larger GEMMs achieve higher TFLOPS utilization.
 
 ## Run
 

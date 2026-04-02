@@ -154,15 +154,6 @@ def main() -> None:
                 )
                 norm_ref = _reference_norms(raw_case.a)
 
-                ref = None
-                if args.reference != "none":
-                    ref_dtype = (
-                        torch.float64 if args.reference == "fp64" else torch.float32
-                    )
-                    ref = polar_reference(raw_case.a, dtype=ref_dtype)
-                    if args.audit and ref.inv_sqrt.is_cuda:
-                        torch.cuda.empty_cache()
-
                 case_coeffs = coeffs
                 if is_stress and pe5_ell0 != args.ell0:
                     case_coeffs = pe5_coefficients(ell0=pe5_ell0, steps=5)
@@ -176,6 +167,16 @@ def main() -> None:
                         schatten4_ridge_stat=args.schatten4_ridge_stat,
                     )
                     a = a.contiguous()
+                    case = Case(name=raw_case.name, a=a)
+
+                    ref = None
+                    if args.reference != "none":
+                        ref_dtype = (
+                            torch.float64 if args.reference == "fp64" else torch.float32
+                        )
+                        ref = polar_reference(case.a, dtype=ref_dtype)
+                        if args.audit and ref.inv_sqrt.is_cuda:
+                            torch.cuda.empty_cache()
 
                     methods: dict[str, Callable[[], object]] = {
                         "dwh2": lambda a=a, ell=args.ell0: dwh2(a, ell0=ell),
@@ -192,7 +193,7 @@ def main() -> None:
 
                         base = asdict(
                             summarize(
-                                case=Case(name=raw_case.name, a=raw_case.a),
+                                case=case,
                                 q=out.q,
                                 ref=ref,
                                 times=times,

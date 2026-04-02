@@ -72,19 +72,50 @@ We use restart interval 3. The paper suggests adding `1e-3 I` to the first Gram 
 
 The methods do not inspect singular values.
 
-All inputs are normalized by
+The default benchmark normalizes inputs by
 
 $$
 X_0 = \frac{A}{\|A\|_F + 10^{-3}}.
 $$
 
-Both methods use the same fixed design lower bound
+The shared CLI design lower bound is
 
 $$
 \ell_0 = 10^{-3}
 $$
 
 by default. This is a design parameter, not an oracle estimate.
+
+For apples-to-apples comparison with the earlier stress tests, the benchmark
+harness still uses `pe5_ell0 = 1e-6` on `duplicate_cols` and `lowrank_noise`.
+DWH2 stays on the fixed CLI value.
+
+### Alternative normalizers
+
+The CLI also supports a Gram-based Schatten-4 normalizer:
+
+$$
+\|A\|_{S_4} = \|A^\top A\|_F^{1/2}.
+$$
+
+The optional TF32-conservative ridge is evaluated through the scalar identity
+
+$$
+\|G + \lambda I\|_F^2 = \|G\|_F^2 + 2 \lambda \operatorname{tr}(G) + n \lambda^2
+$$
+
+instead of materializing the ridged Gram.
+
+Fresh corrected sweep on this machine:
+
+- sweep command: `uv run norm-sweep --device cuda --tf32 --quiet --output runs/norm_sweep_current_20260402.jsonl`
+- shape: 16384 x 4096
+- normalizer candidate: `--normalizer schatten4 --schatten4-ridge-scale 16 --schatten4-ridge-stat max`
+- conservatism: `0/22` underestimates vs true spectral norm in the method-case comparison, with minimum estimated/true spectral ratio `1.00000776`
+- quality impact: improved `q_fro_error` on `2/11` DWH2 cases and `6/11` PE5 cases
+
+So the current default remains `fro`; use `norm-sweep` to evaluate alternative
+normalizers if you want to retune that tradeoff.
 
 ## SPD preconditioning
 
@@ -146,18 +177,19 @@ The audit path is intentionally low-memory. Instead of forming a tall float64 SV
 
 Fresh current-`HEAD` benchmark on this machine:
 
-- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_current_serial_20260401.jsonl`
+- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_current_serial_20260402.jsonl`
 - shape: 16384 x 4096
 - cases: 11 default cases
 - measurement: warmup=1, trials=3
+- normalizer: `fro`
 - execution policy: one benchmark job at a time; no overlapping runs
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **391.05 ms** | **0.06084** | **0.19371** |
-| `pe5` | 664.96 ms | 0.09083 | 0.39122 |
+| `dwh2` | **393.67 ms** | **0.02810** | **0.19372** |
+| `pe5` | 666.69 ms | 0.09089 | 0.39122 |
 
-`dwh2` is 1.70x faster by median runtime and lower on `q_fro_error` in 10/11 cases.
+`dwh2` is 1.69x faster by median runtime and lower on `q_fro_error` in 11/11 cases.
 
 `q_fro_error` is the main quality metric for the raw approximate factor. Raw
 `objective_ratio` is also logged, but it is not a projected metric; use `--audit`
@@ -165,43 +197,45 @@ if you want the projected-objective comparison.
 
 | Case | DWH2 ms | PE5 ms | Speedup | DWH2 `q_fro_error` | PE5 `q_fro_error` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `adversarial_condition` | **397.96** | 674.79 | 1.70x | **0.06084** | 0.12410 |
-| `ar1_cols` | **388.40** | 656.94 | 1.69x | **0.10790** | 0.23701 |
-| `duplicate_cols` | **390.79** | 663.66 | 1.70x | 0.24178 | **0.19284** |
-| `gaussian` | **390.77** | 658.84 | 1.69x | **0.02810** | 0.08953 |
-| `heavy_tail_t` | **393.73** | 670.08 | 1.70x | **0.02758** | 0.09026 |
-| `ill_conditioned` | **393.92** | 668.50 | 1.70x | **0.12110** | 0.19181 |
-| `lognormal_cols` | **388.83** | 661.04 | 1.70x | **0.15298** | 0.25366 |
-| `lowrank_noise` | **391.05** | 664.96 | 1.70x | **0.07714** | 0.09083 |
-| `orthogonal_noisy` | **396.85** | 671.16 | 1.69x | **0.03179** | 0.04190 |
-| `rank_1_heavy` | **395.25** | 672.54 | 1.70x | **0.01331** | 0.01443 |
-| `sparse_like` | **388.20** | 662.47 | 1.71x | **0.02801** | 0.08958 |
+| `adversarial_condition` | **398.11** | 674.81 | 1.70x | **0.06084** | 0.12411 |
+| `ar1_cols` | **387.50** | 658.80 | 1.70x | **0.10788** | 0.23699 |
+| `duplicate_cols` | **392.41** | 666.12 | 1.70x | **0.02119** | 0.19284 |
+| `gaussian` | **390.37** | 660.72 | 1.69x | **0.02810** | 0.08953 |
+| `heavy_tail_t` | **396.51** | 702.64 | 1.77x | **0.02758** | 0.09026 |
+| `ill_conditioned` | **393.67** | 668.07 | 1.70x | **0.12111** | 0.19181 |
+| `lognormal_cols` | **391.37** | 663.48 | 1.70x | **0.15271** | 0.25344 |
+| `lowrank_noise` | **392.62** | 666.69 | 1.70x | **0.01455** | 0.09089 |
+| `orthogonal_noisy` | **396.19** | 673.52 | 1.70x | **0.03179** | 0.04190 |
+| `rank_1_heavy` | **396.08** | 671.53 | 1.70x | **0.01344** | 0.01457 |
+| `sparse_like` | **412.44** | 663.54 | 1.61x | **0.02801** | 0.08958 |
 
-Detailed per-operation DWH2 profile for DWH2 on the 16384 x 4096 Gaussian case:
+Detailed per-operation breakdown for DWH2 on the 16384 x 4096 Gaussian case:
 
 - profile basis: eager mode, 2 warm-up calls, 5 profiled iterations
 - grouping rule: `aten::mm` split by exact input shapes; inclusive `device_time_total` for high-level nodes
 
 | Operation                           | Aggregate (ms) | Count | Per-op (ms) | Share (%) |
 | :---------------------------------- | -------------: | ----: | ----------: | --------: |
-| **GEMM 4096x16384x4096**            |       241.4122 |   2.0 |    120.7061 |    36.01% |
-| **GEMM 16384x4096x4096**            |       216.9831 |   2.0 |    108.4915 |    32.37% |
-| **Triangular Solve (small-side)**   |        99.5103 |   4.0 |     24.8776 |    14.85% |
-| **Cholesky (small-side)**           |        84.5002 |   4.0 |     21.1251 |    12.84% |
-| Memory / Element-wise               |        21.8806 |  40.0 |      0.5470 |     3.33% |
-| Other overhead                      |         2.9031 |  14.0 |      0.2122 |     0.44% |
+| **GEMM 4096x16384x4096**            |       167.3036 |   2.0 |     83.6518 |    36.41% |
+| **GEMM 16384x4096x4096**            |       144.0689 |   2.0 |     72.0344 |    31.35% |
+| **Cholesky (small-side)**           |        71.6286 |   4.0 |     17.9072 |    15.59% |
+| **GEMM 4096x4096x4096**             |        36.9212 |   2.0 |     18.4606 |     8.04% |
+| Memory / Element-wise               |        13.6238 | 192.0 |      0.0710 |     2.96% |
+| **Triangular Solve (small-side)**   |         5.1873 |  16.0 |      0.3242 |     1.13% |
 
 Detailed per-operation breakdown for PE5 (16384 x 4096, 5 iterations):
 
 | Operation                           | Aggregate (ms) | Count | Per-op (ms) | Share (%) |
 | :---------------------------------- | -------------: | ----: | ----------: | --------: |
-| **GEMM 4096x4096x4096**            |       681.9190 |  20.0 |     34.0960 |    59.92% |
-| **GEMM 16384x4096x4096**            |       220.5398 |   2.0 |    110.2699 |    19.38% |
-| **GEMM 4096x16384x4096**            |       214.6005 |   2.0 |    107.3003 |    18.86% |
-| Memory / Element-wise               |        17.4540 |  32.0 |      0.5454 |     1.53% |
-| Other overhead                      |         3.4432 |   1.0 |      3.4432 |     0.30% |
+| **GEMM 4096x4096x4096**             |       381.8374 |  20.0 |     19.0919 |    52.71% |
+| **GEMM 4096x16384x4096**            |       166.9725 |   2.0 |     83.4863 |    23.05% |
+| **GEMM 16384x4096x4096**            |       153.0491 |   2.0 |     76.5246 |    21.13% |
+| Memory / Element-wise               |        18.7676 |  32.0 |      0.5865 |     2.59% |
+| Other overhead                      |         3.8470 |   1.0 |      3.8470 |     0.53% |
 
-**Note on Ratios**: With the profiling artifact fixed, the observed latency ratio between rectangular expansion ($16k \times 4k \times 4k$) and small-side square ($4k^3$) is **~3.2x**. This is physically consistent with the $4\times$ change in FLOPs, as larger GEMMs achieve higher TFLOPS utilization.
+The profile picture is consistent with the benchmark table: DWH2 is dominated by
+two rectangular updates plus two small-side solves, while PE5 spends most of
+its time in the 20 small-side `4096^3` GEMMs from the polynomial steps.
 
 ## Run
 
@@ -209,6 +243,12 @@ Default run:
 
 ```bash
 uv run bench --device cuda --tf32
+```
+
+Try the conservative Gram-based normalizer:
+
+```bash
+uv run bench --device cuda --tf32 --normalizer schatten4 --schatten4-ridge-scale 16 --schatten4-ridge-stat max
 ```
 
 For apples-to-apples benchmark numbers, run one benchmark job at a time.
@@ -235,12 +275,20 @@ Lower `--audit-chunk-rows` further if your GPU is still tight on memory.
 
 If you only need `q_fro_error` and `objective_ratio`, `--reference fp32` already uses the low-memory small-side reference representation and avoids storing the full reference `Q_ref`.
 
+Run the normalization sweep:
+
+```bash
+uv run norm-sweep --device cuda --tf32 --quiet --output runs/norm_sweep/results.jsonl
+```
+
 ## File layout
 
 - `dwh2.py`: DWH2 kernel (rectangular full-TF32-stable implementation) and exact scalar schedule.
 - `pe5.py`: PE5 offline coefficient generator and fast online kernel.
+- `normalization.py`: Frobenius and Gram-based Schatten-4 input scaling helpers.
 - `precond.py`: SPD inverse stack with fast recursive/solve paths and safe retry path. Shared `PolarResult` type.
 - `triton_ops.py`: optional Triton kernels for small-side symmetrization and affine-diagonal updates.
 - `bench.py`: realistic benchmark driver and JSONL logging.
+- `norm_sweep.py`: normalization recipe sweep harness and conservatism audit.
 - `profile_gpu.py`: GPU profiler with Chrome trace and detailed per-op breakdown.
 - `README.md`: this file.

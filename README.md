@@ -197,12 +197,12 @@ Detailed per-operation breakdown for DWH2 (16384 x 4096, single iteration):
 
 | Operation | Total (per run) | Count | Per-op Latency |
 | :--- | ---: | ---: | ---: |
-| **Rectangular GEMM** | **315.8 ms** | 6.0 | **52.63 ms** |
-| Small-side GEMM | 55.1 ms | 58.0 | 0.95 ms |
-| Cholesky | 32.8 ms | 4.0 | 8.22 ms |
-| Memory / Element-wise | 11.0 ms | 192.0 | 0.05 ms |
-| Triangular Solve | 5.5 ms | 16.0 | 0.34 ms |
-| Triton (Affine/Sym) | 5.1 ms | 6.0 | 0.85 ms |
+| **Rectangular GEMM** | **315.8 ms** | 6 | **52.63 ms** |
+| Small-side GEMM | 55.1 ms | 58 | 0.95 ms |
+| Cholesky | 32.8 ms | 4 | 8.22 ms |
+| Memory / Element-wise | 11.0 ms | 192 | 0.05 ms |
+| Triangular Solve | 5.5 ms | 16 | 0.34 ms |
+| Triton (Affine/Sym) | 5.1 ms | 6 | 0.85 ms |
 
 ## Run
 

@@ -265,8 +265,10 @@ def main() -> None:
                 continue
             share = (s.total_time_ms / total_ms) * 100
             count_per_run = s.count / profile_iters
+            # If it's a whole number, show as integer
+            count_str = f"{int(count_per_run)}" if count_per_run.is_integer() else f"{count_per_run:.1f}"
             print(
-                f"{s.name:<30} | {s.total_time_ms / profile_iters:>10.2f} | {count_per_run:>7.1f} | {s.mean_time_ms:>12.4f} | {share:>10.2f}%"
+                f"{s.name:<30} | {s.total_time_ms / profile_iters:>10.2f} | {count_str:>7} | {s.mean_time_ms:>12.4f} | {share:>10.2f}%"
             )
 
 

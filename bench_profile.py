@@ -4,8 +4,9 @@ import argparse
 import importlib
 import json
 import math
+import os
 import statistics
-import time
+import sys
 from dataclasses import asdict, dataclass
 from typing import Callable
 
@@ -39,40 +40,37 @@ def measure(fn: Callable[[], object], trials: int, warmup: int) -> tuple[object,
     return out, times
 
 
-def qtq_metrics(q: torch.Tensor) -> tuple[float, float, float, float]:
-    # Returns:
-    # ortho_fro, diag_rms, diag_max, offdiag_fro   (all normalized by sqrt(n) when appropriate)
+def _symmetrize_(a: torch.Tensor, scratch: torch.Tensor) -> None:
+    scratch.copy_(a.mT)
+    a.add_(scratch).mul_(0.5)
+
+
+@torch.no_grad()
+def ortho_fro(q: torch.Tensor, workspace: dwh2.DWH2Workspace) -> float:
+    """Orthogonality error in fp32 accumulation, computed out-of-band (not timed)."""
     transposed = q.shape[0] < q.shape[1]
-    Q = q.mT.contiguous() if transposed else q
-    Q = Q.float()
-    n = Q.shape[1]
+    Q = q.mT if transposed else q
+    m, n = Q.shape
 
-    G = Q.mT @ Q
-    diag = G.diagonal()
-    diag_err = diag - 1.0
+    gram = workspace.gram  # [n, n] fp32
+    xbuf = workspace.xbuf  # [br, n] fp32
+    scratch = workspace.scratch
+    tmp = workspace.tmp
 
-    # ortho fro
-    G.diagonal().sub_(1.0)
-    ortho = float(torch.linalg.matrix_norm(G, ord="fro").item() / math.sqrt(n))
+    gram.zero_()
+    br = int(workspace.block_rows)
+    for s in range(0, m, br):
+        r = min(br, m - s)
+        xbuf[:r].copy_(Q[s : s + r])
+        gram.addmm_(xbuf[:r].mT, xbuf[:r])
 
-    # diag stats
-    diag_rms = float(torch.sqrt(torch.mean(diag_err * diag_err)).item())
-    diag_max = float(torch.max(torch.abs(diag_err)).item())
+    _symmetrize_(gram, scratch)
+    gram.diagonal().sub_(1.0)
 
-    # offdiag fro
-    # offdiag_fro^2 = ||G||_F^2 - ||diag(G)||_2^2
-    # use original diag (before subtract) and original ||G||: rebuild cheaply
-    # We already modified G's diag, but can fix it back:
-    G.diagonal().add_(1.0)
-    fro2 = float(torch.sum(G * G).item())
-    diag2 = float(torch.sum(diag * diag).item())
-    offdiag = math.sqrt(max(fro2 - diag2, 0.0)) / math.sqrt(n)
-
-    return ortho, diag_rms, diag_max, float(offdiag)
-
-
-def objective_fp32(q: torch.Tensor, a_norm: torch.Tensor) -> float:
-    return float(torch.sum(q.float() * a_norm.float()).item())
+    tmp.copy_(gram)
+    tmp.mul_(gram)
+    fro = torch.sum(tmp, dtype=torch.float64).sqrt() / math.sqrt(float(n))
+    return float(fro.item())
 
 
 def cast_dtype(a: torch.Tensor, dtype: str) -> torch.Tensor:
@@ -139,10 +137,41 @@ def make_case(name: str, m: int, n: int, *, device: torch.device, seed: int) -> 
         chi2.addcmul_(tail, tail)
         chi2.mul_(0.5).clamp_min_(1e-4).sqrt_()
         return z / chi2
+    if name == "sparse_like":
+        base = _randn((m, n), device=device, seed=seed)
+        g = torch.Generator(device=device)
+        g.manual_seed(seed + 1)
+        mask = torch.rand((m, n), device=device, generator=g) > 0.95
+        return base * mask.float()
+    if name == "orthogonal_noisy":
+        a = 1e-4 * _randn((m, n), device=device, seed=seed + 1)
+        k = min(m, n)
+        a[:k, :k].diagonal().add_(1.0)
+        return a
+    if name == "rank_1_heavy":
+        u = _randn((m, 1), device=device, seed=seed)
+        v = _randn((1, n), device=device, seed=seed + 1)
+        noise = 1e-6 * _randn((m, n), device=device, seed=seed + 2)
+        return u @ v + noise
+    if name == "adversarial_condition":
+        x = _randn((m, n), device=device, seed=seed)
+        v = torch.linalg.qr(_randn((n, n), device=device, seed=seed + 1))[0]
+        s = torch.linspace(1.0, 1e-7, steps=n, device=device, dtype=x.dtype)
+        return (x * s[None, :]) @ v
     raise ValueError(name)
 
 
-def import_gns():
+def import_gns(gns_path: str):
+    root = os.path.dirname(os.path.abspath(__file__))
+    paths = [
+        os.path.join(root, "third_party", "gram-newton-schulz"),
+        os.path.join(root, "third_party", "quack"),
+    ]
+    if gns_path:
+        paths.insert(0, os.path.abspath(gns_path))
+    for p in paths:
+        if os.path.exists(p) and p not in sys.path:
+            sys.path.insert(0, p)
     try:
         return importlib.import_module("gram_newton_schulz")
     except ModuleNotFoundError:
@@ -150,6 +179,7 @@ def import_gns():
 
 
 def make_gns_core_runner(gns_mod, *, use_kernels: bool, reset_iters: list[int]):
+    # Load coefficients from the repo (should be 5 iters by default)
     try:
         try:
             coefs_mod = importlib.import_module("gram_newton_schulz.coefficients")
@@ -162,17 +192,21 @@ def make_gns_core_runner(gns_mod, *, use_kernels: bool, reset_iters: list[int]):
     GramNewtonSchulz = getattr(gns_mod, "GramNewtonSchulz")
     gns_obj = GramNewtonSchulz(
         ns_use_kernels=bool(use_kernels),
-        ns_coefficients=coefs,  # 5 iters
+        ns_coefficients=coefs,
         gram_newton_schulz_reset_iterations=list(reset_iters),
     )
 
+    # FULL fp16 core: bypass __call__ normalization/cast. Use internals if available.
     def core(x_norm_fp16: torch.Tensor) -> torch.Tensor:
-        X = x_norm_fp16.half() if x_norm_fp16.dtype != torch.float16 else x_norm_fp16
+        X = x_norm_fp16
+        if X.dtype != torch.float16:
+            X = X.half()
+
         should_transpose = (X.size(-2) > X.size(-1))
         if should_transpose:
             X = X.mT.contiguous()
-        Xb = X.unsqueeze(0)
 
+        Xb = X.unsqueeze(0)
         ar = getattr(gns_obj, "aspect_ratio_to_use_gram_newton_schulz", 1)
         use_gram = (max(Xb.shape[-2:]) > ar * min(Xb.shape[-2:]))
 
@@ -180,6 +214,7 @@ def make_gns_core_runner(gns_mod, *, use_kernels: bool, reset_iters: list[int]):
             Yb = gns_obj._gram_newton_schulz(Xb) if use_gram else gns_obj._standard_newton_schulz(Xb)
             Y = Yb.squeeze(0)
         else:
+            # fallback (includes extra normalization, but keeps script robust)
             Y = gns_obj(X)
 
         if should_transpose:
@@ -199,14 +234,9 @@ class Record:
     compile: bool
     trials: int
     warmup: int
-    dwh2_apply: str
     median_ms: float
     min_ms: float
     ortho_fro: float
-    diag_rms: float
-    diag_max: float
-    offdiag_fro: float
-    objective_fp32: float
     chol_calls: int
     chol_shifted_calls: int
     chol_total_retries: int
@@ -218,24 +248,34 @@ def main():
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--no-tf32", action="store_true")
     ap.add_argument("--compile", action="store_true")
+    ap.add_argument("--no-metrics", action="store_true")
+
+
     ap.add_argument("--trials", type=int, default=30)
     ap.add_argument("--warmup", type=int, default=10)
+
     ap.add_argument("--seeds", type=str, default="0,1")
     ap.add_argument("--dtype", type=str, default="fp16", choices=["fp16", "bf16", "fp32"])
-    ap.add_argument("--cases", type=str, default="gaussian,lognormal_cols,ar1_cols,duplicate_cols,lowrank_noise,ill_conditioned,heavy_tail_t")
-    ap.add_argument("--shapes", type=str, default="16384x4096,8192x4096,4096x4096")
+
+    ap.add_argument("--cases", type=str, default="gaussian,lognormal_cols,ar1_cols,duplicate_cols,lowrank_noise,ill_conditioned,heavy_tail_t,sparse_like,orthogonal_noisy,rank_1_heavy,adversarial_condition")
+    ap.add_argument("--shapes", type=str, default="16384x4096,8192x4096,4096x4096,4096x8192,32768x2048,65536x1024")
+
+    ap.add_argument("--gns-path", type=str, default="")
     ap.add_argument("--gns-use-kernels", action="store_true")
     ap.add_argument("--gns-reset-iters", type=str, default="2")
+
     ap.add_argument("--ell0", type=float, default=dwh2.PAPER_MUON_ELL)
     ap.add_argument("--norm-eps", type=float, default=dwh2.NORM_EPS)
     ap.add_argument("--norm-safety", type=float, default=dwh2.NORM_SAFETY)
-    ap.add_argument("--dwh2-apply", type=str, default="fp16", choices=["fp16", "fp32"])
+
     ap.add_argument("--output", type=str, default="results.jsonl")
     args = ap.parse_args()
 
     device = torch.device(args.device)
     if device.type != "cuda":
         raise RuntimeError("This benchmark is tuned for CUDA GPUs.")
+
+    # Ensure CUDA ops/events run on the requested device (important for multi-GPU)
     if device.index is not None:
         torch.cuda.set_device(device.index)
 
@@ -249,10 +289,11 @@ def main():
         shapes.append((int(m), int(n), s))
     reset_iters = [int(x) for x in args.gns_reset_iters.split(",") if x.strip()]
 
-    gns_mod = import_gns()
+    gns_mod = import_gns(args.gns_path)
     gns_core = make_gns_core_runner(gns_mod, use_kernels=bool(args.gns_use_kernels), reset_iters=reset_iters)
 
     out_f = open(args.output, "w", encoding="utf-8", buffering=1)
+
     try:
         with torch.inference_mode():
             for (m, n, shape_str) in shapes:
@@ -261,9 +302,10 @@ def main():
                         a0 = make_case(case_name, m, n, device=device, seed=seed).contiguous()
                         a = cast_dtype(a0, args.dtype).contiguous()
 
+                        # Pre-alloc workspace once per config
                         ws = dwh2.DWH2Workspace.allocate(min(a.shape), a.device, a.dtype, block_rows=dwh2.GRAM_BLOCK_ROWS)
 
-                        # Shared normalization once (excluded from timing)
+                        # Shared moment-bound normalization once (excluded from timing)
                         a_norm, gram_norm = dwh2.normalize_moment_with_small_gram(
                             a,
                             eps=float(args.norm_eps),
@@ -271,17 +313,16 @@ def main():
                             workspace=ws,
                         )
 
-                        def run_dwh2():
-                            return dwh2.dwh2_core(
-                                a_norm, gram_norm, ell0=float(args.ell0), workspace=ws, apply=args.dwh2_apply
-                            )
+                        def run_dwh2_core():
+                            return dwh2.dwh2_core(a_norm, gram_norm, ell0=float(args.ell0), workspace=ws)
 
-                        def run_gns():
+                        def run_gns_core():
+                            # enforce full fp16 iteration for fairness
                             y = gns_core(a_norm.half())
                             return dwh2.PolarResult(q=y)
 
-                        f_dwh2 = run_dwh2
-                        f_gns = run_gns
+                        f_dwh2 = run_dwh2_core
+                        f_gns = run_gns_core
                         if args.compile:
                             f_dwh2 = torch.compile(f_dwh2, mode="max-autotune")  # type: ignore
                             f_gns = torch.compile(f_gns, mode="max-autotune")  # type: ignore
@@ -291,8 +332,11 @@ def main():
                             q = out.q
                             st = out.stats
 
-                            ortho, diag_rms, diag_max, offdiag = qtq_metrics(q)
-                            obj = objective_fp32(q, a_norm)
+                            ortho = float('nan')
+                            if not args.no_metrics:
+                                torch.cuda.synchronize()
+                                ortho = ortho_fro(q, ws)
+                                torch.cuda.synchronize()
 
                             rec = Record(
                                 method=method,
@@ -303,14 +347,9 @@ def main():
                                 compile=bool(args.compile),
                                 trials=int(args.trials),
                                 warmup=int(args.warmup),
-                                dwh2_apply=args.dwh2_apply,
                                 median_ms=float(statistics.median(times)),
                                 min_ms=float(min(times)),
                                 ortho_fro=ortho,
-                                diag_rms=diag_rms,
-                                diag_max=diag_max,
-                                offdiag_fro=offdiag,
-                                objective_fp32=obj,
                                 chol_calls=st.calls,
                                 chol_shifted_calls=st.shifted_calls,
                                 chol_total_retries=st.total_retries,
@@ -319,6 +358,7 @@ def main():
                             line = json.dumps(asdict(rec), sort_keys=True)
                             print(line, flush=True)
                             out_f.write(line + "\n")
+
     finally:
         out_f.close()
 

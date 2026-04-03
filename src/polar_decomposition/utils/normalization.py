@@ -17,10 +17,6 @@ def _tall_view(a: torch.Tensor) -> torch.Tensor:
     return a if a.shape[0] >= a.shape[1] else a.mT
 
 
-def fro_scale(a: torch.Tensor) -> float:
-    return float(torch.linalg.matrix_norm(a, ord="fro").item())
-
-
 def _uses_tf32_matmul(x: torch.Tensor) -> bool:
     return bool(
         x.is_cuda
@@ -64,35 +60,6 @@ def _moment_lambda_upper(
     return (t1 + torch.sqrt((n - 1) * radicand)) / n
 
 
-def spectral_bound_scale(a: torch.Tensor) -> NormalizationInfo:
-    """One-sided spectral-norm upper bound from Gram moments.
-
-    For a tall view X of A with Gram G = X^T X, use t1 = tr(G) = ||X||_F^2 and a
-    conservative upper bound on t2 = tr(G^2) = ||G||_F^2. The PSD moment bound
-
-        lambda_max(G) <= (t1 + sqrt((n - 1) (n t2 - t1^2))) / n
-
-    then gives an upper bound on ||A||_2 = sqrt(lambda_max(G)).
-    """
-    x = _tall_view(a)
-    gram = x.mT @ x
-
-    t1 = torch.sum(torch.square(x), dtype=torch.float64)
-    gram_fro = torch.linalg.matrix_norm(gram, ord="fro").to(torch.float64)
-    t2 = gram_fro * gram_fro
-
-    n = x.shape[1]
-    raw_lambda = _moment_lambda_upper(t1, t2, n)
-    raw_scale = float(torch.sqrt(raw_lambda).item())
-
-    eta = _gram_error_envelope(x)
-    t2_ub = torch.square(gram_fro + (eta * t1))
-    ub_lambda = _moment_lambda_upper(t1, t2_ub, n)
-    scale = float(torch.sqrt(ub_lambda).item())
-
-    return NormalizationInfo(method="spectral_bound", raw_scale=raw_scale, scale=scale)
-
-
 def spectral_additive_scale(a: torch.Tensor) -> NormalizationInfo:
     """One-sided spectral upper bound via additive Gram error envelope.
 
@@ -126,26 +93,14 @@ def spectral_additive_scale(a: torch.Tensor) -> NormalizationInfo:
     )
 
 
-def estimate_normalization(
-    a: torch.Tensor,
-    *,
-    method: str,
-) -> NormalizationInfo:
-    if method == "fro":
-        scale = fro_scale(a)
-        return NormalizationInfo(method="fro", raw_scale=scale, scale=scale)
-    if method == "spectral_bound":
-        return spectral_bound_scale(a)
-    if method == "spectral_additive":
-        return spectral_additive_scale(a)
-    raise ValueError(f"unknown normalization method {method}")
+def estimate_normalization(a: torch.Tensor) -> NormalizationInfo:
+    return spectral_additive_scale(a)
 
 
 def normalize_matrix(
     a: torch.Tensor,
     *,
-    method: str,
     eps: float,
 ) -> tuple[torch.Tensor, NormalizationInfo]:
-    info = estimate_normalization(a, method=method)
+    info = estimate_normalization(a)
     return a / (info.scale + eps), info

@@ -11,7 +11,7 @@ import torch
 from torch.profiler import ProfilerActivity, profile
 
 from .bench import make_case, measure, set_fast_matmul
-from ..algorithms.dwh2 import DWH2_MODES, dwh2
+from ..algorithms.dwh2 import dwh2
 from ..utils.normalization import normalize_matrix
 from ..algorithms.pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
 
@@ -79,19 +79,8 @@ def main() -> None:
     parser.add_argument("--iters", type=int, default=25)
     parser.add_argument("--trace-dir", type=str, default="profiles")
     parser.add_argument("--tf32", action="store_true")
-    parser.add_argument("--robust-dwh2", action="store_true")
     parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
-    parser.add_argument(
-        "--dwh2-mode",
-        choices=list(DWH2_MODES),
-        default="smallside_bounded",
-    )
     parser.add_argument("--symmetrize-pe5", action="store_true")
-    parser.add_argument(
-        "--normalizer",
-        choices=["fro", "spectral_bound", "spectral_additive"],
-        default="spectral_additive",
-    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -100,7 +89,6 @@ def main() -> None:
     case = make_case(args.case, args.rows, args.cols, device=device, seed=args.seed)
     a, _ = normalize_matrix(
         case.a,
-        method=args.normalizer,
         eps=PAPER_NORM_EPS,
     )
     a = a.contiguous()
@@ -113,8 +101,6 @@ def main() -> None:
             return dwh2(
                 x,
                 ell0=args.ell0,
-                mode=args.dwh2_mode,
-                robust=args.robust_dwh2,
             )
     else:
 

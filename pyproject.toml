@@ -12,7 +12,6 @@ dependencies = [
 
 [project.scripts]
 bench = "polar_decomposition.cli.bench:main"
-norm-sweep = "polar_decomposition.cli.norm_sweep:main"
 profile-gpu = "polar_decomposition.cli.profile_gpu:main"
 
 [build-system]

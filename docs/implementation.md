@@ -38,20 +38,9 @@ $$
 
 just rewritten to avoid explicitly forming the $a_k I + b_k G_k$ factor.
 
-### Rectangular recomputation
-
-The rectangular kernel recomputes the small-side Gram from the actual iterate each step,
-
-$$
-G_k = X_k^\top X_k, \qquad
-X_{k+1} = X_k M_k.
-$$
-
-This uses four large $O(mn^2)$ matmuls across the two DWH steps. On the target GPU that turned out to be both faster and more stable than the theoretically leaner accumulated-Gram variant once full TF32 tensor-core matmuls were enabled.
-
 ### Bounded small-side mode
 
-The default DWH2 kernel is now the bounded small-side mode.
+The DWH2 implementation is the bounded small-side mode.
 
 It keeps the first step in the initial small-side state,
 
@@ -82,7 +71,7 @@ I + \frac{c_1}{c_0}
 \Bigr),
 $$
 
-then inverts $A_1$ directly on the small side and finishes with one large
+then factors $A_1$ directly on the small side and finishes with one large
 right-multiply.
 
 This removes the old dense-RHS second solve `K^{-1} H_0` from the critical
@@ -90,26 +79,16 @@ path. The bounded `H_0 @ (I - H_0)` site is unit-diagonal scaled before the
 TF32 GEMM so the tensor-core multiply sees a correlation-like matrix instead of
 the raw SPD block.
 
-The final product is also evaluated in a more stable exact form. Writing
+The final update is now applied directly through the Cholesky factor of $A_1$:
 
 $$
-H_1 = A_1^{-1},
+K = \alpha_1 M_0 + \beta_1 (M_0 A_1^{-1}).
 $$
 
-the implementation uses
-
-$$
-K = \alpha_1 M_0 + \beta_1 (M_0 H_1)
-$$
-
-instead of forming $M_0 (\alpha_1 I + \beta_1 H_1)$ directly. The identity term
-stays out of the TF32 GEMM, and the inner $M_0 H_1$ product is diagonally
-balanced with an exact right-scale / left-unscale pair before the matmul.
-
-The rectangular kernel remains available as a reference mode:
-
-- `rectangular`: recompute the actual iterate Gram at both DWH steps
-- `smallside_bounded`: default bounded small-side kernel
+Instead of explicitly forming $H_1 = A_1^{-1}$ and then multiplying by it, the
+implementation applies $A_1^{-1}$ to $M_0$ with two right-side triangular
+solves. That removes the last small-side GEMM from the bounded path and proved
+both faster and slightly more accurate overall on the benchmark suite.
 
 The ongoing bounded-mode diagnosis is documented in
 [dwh2-smallside-diagnosis.md](dwh2-smallside-diagnosis.md).
@@ -122,7 +101,7 @@ We use the Polar Express offline degree-5 coefficient generator with:
 - recentering around 1,
 - the `1.01` safety factor on all but the final polynomial.
 
-The online method is the fast rectangular small-side formulation. For a polynomial
+The online method is the fast small-side formulation. For a polynomial
 
 $$
 p(x) = x(a + b x^2 + c x^4),
@@ -134,9 +113,8 @@ We use restart interval 3. The paper suggests adding $10^{-3} I$ to the first Gr
 
 ## Normalization
 
-The methods do not inspect singular values.
-
-The default benchmark normalizes inputs by a one-sided additive spectral bound.
+The methods do not inspect singular values. Inputs are normalized by a one-sided
+additive spectral bound.
 For a tall view $X$ and the computed small-side Gram $\widehat G = X^\top X$, we use
 
 $$
@@ -172,25 +150,6 @@ $$
 
 This is less conservative in practice than inflating $t_2$ first.
 
-The older `spectral_bound` alternative inflates the second moment directly. It uses
-
-$$
-t_1 = \|X\|_F^2,\qquad
-t_{2,\mathrm{ub}} = \bigl(\|\widehat G\|_F + \eta \|X\|_F^2\bigr)^2,
-$$
-
-followed by the PSD moment bound
-
-$$
-\alpha_{\mathrm{ub}}
-=
-\sqrt{
-\frac{
-t_1 + \sqrt{(n - 1)(n t_{2,\mathrm{ub}} - t_1^2)}
-}{n}
-}.
-$$
-
 The normalized input is then
 
 $$
@@ -207,11 +166,6 @@ $$
 
 by default. This is a design parameter, not an oracle estimate.
 
-The only alternative CLI baseline is:
-
-- `fro`: the QDWH-style practical upper bound $\|A\|_F`
-- `spectral_bound`: the older moment-inflation bound
-
 ## SPD preconditioning
 
 Every DWH solve uses the same small-side SPD inverse stack:
@@ -223,5 +177,3 @@ Every DWH solve uses the same small-side SPD inverse stack:
 5. inverse formation via Cholesky solves or triangular solves, depending on the call site.
 
 The scale-and-symmetrize step also has a Triton fast path for large contiguous CUDA `float32` matrices.
-
-A safe path with `cholesky_ex` retries and geometric jitter is available via `robust=True`.

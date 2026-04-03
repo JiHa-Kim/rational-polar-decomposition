@@ -12,7 +12,7 @@ from typing import Callable, Optional
 
 import torch
 
-from ..algorithms.dwh2 import DWH2_MODES, dwh2
+from ..algorithms.dwh2 import dwh2
 from ..utils.normalization import NormalizationInfo, normalize_matrix
 from ..algorithms.pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
 from ..utils.precond import CholStats, PolarResult
@@ -28,7 +28,6 @@ class Case:
 class Record:
     case: str
     method: str
-    dwh2_mode: Optional[str]
     normalizer: str
     is_stress: bool
     trials: int
@@ -157,10 +156,6 @@ def make_case(
     return Case(name=name, a=a)
 
 
-def normalize_fro(a: torch.Tensor) -> torch.Tensor:
-    return normalize_matrix(a, method="fro", eps=PAPER_NORM_EPS)[0]
-
-
 def _scaled_eig_cutoff(evals: torch.Tensor, *, dtype: torch.dtype) -> float:
     scale = max(float(evals[-1].item()), float(torch.finfo(dtype).tiny))
     return float(torch.finfo(dtype).eps) * scale
@@ -286,7 +281,6 @@ def summarize(
     ref: Optional[ReferencePolar],
     times: Sequence[float],
     method: str,
-    dwh2_mode: Optional[str],
     normalization: NormalizationInfo,
     trials: int,
     stats: CholStats,
@@ -330,7 +324,6 @@ def summarize(
     return Record(
         case=case.name,
         method=method,
-        dwh2_mode=dwh2_mode,
         normalizer=normalization.method,
         is_stress=is_stress,
         trials=trials,
@@ -377,20 +370,6 @@ def main() -> None:
         help="Compile the algorithmic kernels with torch.compile",
     )
     parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
-    parser.add_argument(
-        "--dwh2-mode",
-        type=str,
-        default="smallside_bounded",
-        choices=list(DWH2_MODES),
-        help="DWH2 kernel variant.",
-    )
-    parser.add_argument(
-        "--normalizer",
-        type=str,
-        default="spectral_additive",
-        choices=["fro", "spectral_bound", "spectral_additive"],
-        help="Input scaling used before running the polar iterations.",
-    )
     parser.add_argument(
         "--reference",
         type=str,
@@ -469,7 +448,6 @@ def main() -> None:
                 )
                 a, normalization = normalize_matrix(
                     case.a,
-                    method=args.normalizer,
                     eps=PAPER_NORM_EPS,
                 )
                 a = a.contiguous()
@@ -485,11 +463,7 @@ def main() -> None:
                         torch.cuda.empty_cache()
 
                 methods: dict[str, Callable[[], object]] = {
-                    "dwh2": lambda a=case.a, ell=args.ell0, mode=args.dwh2_mode: dwh2_fn(
-                        a,
-                        ell0=ell,
-                        mode=mode,
-                    ),
+                    "dwh2": lambda a=case.a, ell=args.ell0: dwh2_fn(a, ell0=ell),
                     "pe5": lambda a=case.a, cs=coeffs, ell=args.ell0: pe5_fn(
                         a, ell0=ell, coeffs=cs
                     ),
@@ -505,7 +479,6 @@ def main() -> None:
                         ref=ref,
                         times=times,
                         method=method_name,
-                        dwh2_mode=args.dwh2_mode if method_name == "dwh2" else None,
                         normalization=normalization,
                         trials=args.trials,
                         stats=out.stats,

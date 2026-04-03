@@ -10,15 +10,15 @@ The repo is intentionally focused on matrix-only inputs and realistic low-precis
 ## Current headline
 
 Fresh current-`HEAD` benchmark on this machine with shared $\ell_0 = 10^{-3}$,
-the default `spectral_additive` normalizer, and the default DWH2
-`smallside_bounded` mode:
+the default `spectral_additive` normalization, and the bounded small-side DWH2
+kernel:
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **367.07 ms** | **0.02963** | **0.06771** |
-| `pe5` | 680.00 ms | 0.08874 | 0.18627 |
+| `dwh2` | **344.13 ms** | **0.02963** | **0.06763** |
+| `pe5` | 664.87 ms | 0.08874 | 0.18627 |
 
-`dwh2` is 1.85x faster by median runtime and lower on `q_fro_error` in 10/11
+`dwh2` is 1.93x faster by median runtime and lower on `q_fro_error` in 11/11
 default cases.
 
 ## Quick start
@@ -29,34 +29,10 @@ Default run:
 uv run bench --device cuda --tf32
 ```
 
-Rectangular DWH2 reference:
-
-```bash
-uv run bench --device cuda --tf32 --dwh2-mode rectangular
-```
-
-Frobenius baseline:
-
-```bash
-uv run bench --device cuda --tf32 --normalizer fro
-```
-
-Previous moment-inflation bound:
-
-```bash
-uv run bench --device cuda --tf32 --normalizer spectral_bound
-```
-
 Write JSONL output:
 
 ```bash
 uv run bench --device cuda --tf32 --output runs/run1/results.jsonl --quiet
-```
-
-Run the normalization sweep:
-
-```bash
-uv run norm-sweep --device cuda --tf32 --quiet --output runs/norm_sweep/results.jsonl
 ```
 
 Run the low-memory projected-objective audit:

@@ -49,9 +49,14 @@ $$
 
 This uses four large $O(mn^2)$ matmuls across the two DWH steps. On the target GPU that turned out to be both faster and more stable than the theoretically leaner accumulated-Gram variant once full TF32 tensor-core matmuls were enabled.
 
-### Experimental small-side bounded mode
+### Bounded small-side mode
 
-The repo also contains the current bounded small-side DWH2 experiment. That ongoing work is documented in [dwh2-smallside-diagnosis.md](dwh2-smallside-diagnosis.md).
+The fastest current DWH2 path is the bounded small-side mode, which is now the
+default. The rectangular kernel is still kept as the reference path because it
+remains useful for quality comparisons and debugging.
+
+The ongoing bounded-mode diagnosis is documented in
+[dwh2-smallside-diagnosis.md](dwh2-smallside-diagnosis.md).
 
 ## PE5
 

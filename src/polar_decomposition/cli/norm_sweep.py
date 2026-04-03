@@ -19,7 +19,7 @@ from .bench import (
     set_fast_matmul,
     summarize,
 )
-from ..algorithms.dwh2 import dwh2
+from ..algorithms.dwh2 import DWH2_MODES, dwh2
 from ..utils.normalization import normalize_matrix
 from ..algorithms.pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
 from ..utils.precond import PolarResult
@@ -53,6 +53,13 @@ def main() -> None:
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--tf32", action="store_true")
     parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
+    parser.add_argument(
+        "--dwh2-mode",
+        type=str,
+        default="smallside_bounded",
+        choices=list(DWH2_MODES),
+        help="DWH2 kernel variant used during the sweep.",
+    )
     parser.add_argument(
         "--reference",
         type=str,
@@ -143,7 +150,9 @@ def main() -> None:
                             torch.cuda.empty_cache()
 
                     methods: dict[str, Callable[[], object]] = {
-                        "dwh2": lambda a=a, ell=args.ell0: dwh2(a, ell0=ell),
+                        "dwh2": lambda a=a, ell=args.ell0, mode=args.dwh2_mode: dwh2(
+                            a, ell0=ell, mode=mode
+                        ),
                         "pe5": lambda a=a, cs=coeffs, ell=args.ell0: pe5(
                             a, ell0=ell, coeffs=cs
                         ),
@@ -162,6 +171,9 @@ def main() -> None:
                                 ref=ref,
                                 times=times,
                                 method=method_name,
+                                dwh2_mode=(
+                                    args.dwh2_mode if method_name == "dwh2" else None
+                                ),
                                 normalization=normalization,
                                 trials=args.trials,
                                 stats=out.stats,

@@ -18,11 +18,12 @@ The current `smallside_bounded` mode in [dwh2.py](../src/polar_decomposition/alg
   `alpha * buf + beta * (H @ buf)` instead of a raw `M @ buf`
 - applies the second solve as two triangular solves
 
-Integrated 11-case sweep at `16384 x 4096`, `seed=0`, `spectral_bound` normalization:
+Integrated 11-case benchmark at `16384 x 4096`, `seed=0`,
+`spectral_bound` normalization:
 
-- `rectangular` median runtime: `390.09 ms`
-- `smallside_bounded` median runtime: `374.91 ms`
-- faster on `11/11`
+- `rectangular` median runtime: `389.50 ms`
+- `smallside_bounded` median runtime: `388.55 ms`
+- faster on `6/11`
 - better `q_fro_error` on `8/11`
 - remaining worse cases: `rank_1_heavy`, `lowrank_noise`, `ar1_cols`
 
@@ -191,15 +192,15 @@ scalar arithmetic, and only the bounded `H @ buf` term goes through TF32.
 
 Empirical effect on the integrated `smallside_bounded` kernel:
 
-- keeps the all-case speed win against `rectangular`
+- keeps the median speed win against `rectangular`
 - improves the remaining correlated-hard cases slightly without introducing
   routing or site-wide FP32
 
 Latest 11-case sweep at `16384 x 4096`, `seed=0`, `spectral_bound`:
 
-- `rectangular` median runtime: `390.09 ms`
-- `smallside_bounded` median runtime: `374.91 ms`
-- faster on `11/11`
+- `rectangular` median runtime: `389.50 ms`
+- `smallside_bounded` median runtime: `388.55 ms`
+- faster on `6/11`
 - better `q_fro_error` on `8/11`
 
 Representative rows:

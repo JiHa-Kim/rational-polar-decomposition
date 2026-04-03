@@ -47,41 +47,66 @@ This keeps `q_fro_error` comparable across different normalizers.
 
 ## Current benchmark snapshot
 
-Fresh current-`HEAD` benchmark on this machine with the shared $\ell_0 = 10^{-3}$ setting for both methods:
+Fresh current-`HEAD` benchmark on this machine with the shared $\ell_0 = 10^{-3}$
+setting for both methods:
 
-- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_spectral_bound_serial_20260402.jsonl`
+- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_default_smallside_bounded_20260402.jsonl`
 - shape: 16384 x 4096
 - cases: 11 default cases
 - measurement: warmup=1, trials=3
 - normalizer: `spectral_bound`
+- DWH2 mode: `smallside_bounded` (default)
 - execution policy: one benchmark job at a time
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **405.90 ms** | **0.03147** | **0.07454** |
-| `pe5` | 690.11 ms | 0.08877 | 0.18633 |
+| `dwh2` | **381.06 ms** | **0.03537** | **0.07029** |
+| `pe5` | 674.85 ms | 0.08877 | 0.18633 |
 
-`dwh2` is 1.70x faster by median runtime and lower on `q_fro_error` in 11/11 cases.
+`dwh2` is 1.77x faster by median runtime and lower on `q_fro_error` in 10/11
+cases.
 
 ## Detailed per-case results
 
 | Case | DWH2 ms | PE5 ms | Speedup | DWH2 `q_fro_error` | PE5 `q_fro_error` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `adversarial_condition` | **402.74** | 696.63 | 1.73x | **0.51762** | 0.53158 |
-| `ar1_cols` | **402.39** | 666.37 | 1.66x | **0.02869** | 0.08877 |
-| `duplicate_cols` | **398.13** | 677.87 | 1.70x | **0.33440** | 0.36799 |
-| `gaussian` | **406.94** | 678.19 | 1.67x | **0.03147** | 0.08849 |
-| `heavy_tail_t` | **418.73** | 699.41 | 1.67x | **0.03118** | 0.08836 |
-| `ill_conditioned` | **405.90** | 690.11 | 1.70x | **0.78345** | 0.83943 |
-| `lognormal_cols` | **399.90** | 681.63 | 1.70x | **0.13339** | 0.20085 |
-| `lowrank_noise` | **411.94** | 696.05 | 1.69x | **0.10389** | 0.11190 |
-| `orthogonal_noisy` | **417.95** | 698.65 | 1.67x | **0.02867** | 0.08751 |
-| `rank_1_heavy` | **400.25** | 676.08 | 1.69x | **0.01343** | 0.01437 |
-| `sparse_like` | **406.28** | 699.98 | 1.72x | **0.03140** | 0.08841 |
+| `adversarial_condition` | **381.66** | 676.81 | 1.77x | **0.50982** | 0.53158 |
+| `ar1_cols` | **394.97** | 672.99 | 1.70x | **0.03537** | 0.08877 |
+| `duplicate_cols` | **392.05** | 680.84 | 1.74x | **0.32983** | 0.36799 |
+| `gaussian` | **377.79** | 668.46 | 1.77x | **0.03058** | 0.08849 |
+| `heavy_tail_t` | **380.18** | 674.77 | 1.78x | **0.03022** | 0.08836 |
+| `ill_conditioned` | **382.62** | 674.85 | 1.76x | **0.77255** | 0.83943 |
+| `lognormal_cols` | **380.08** | 684.23 | 1.80x | **0.13305** | 0.20085 |
+| `lowrank_noise` | **380.28** | 670.36 | 1.76x | **0.10497** | 0.11190 |
+| `orthogonal_noisy` | **382.52** | 675.96 | 1.77x | **0.02806** | 0.08751 |
+| `rank_1_heavy` | **381.06** | 675.50 | 1.77x | 0.01648 | **0.01437** |
+| `sparse_like` | **376.18** | 669.03 | 1.78x | **0.03046** | 0.08841 |
 
-## Representative profiles
+## Rectangular reference snapshot
 
-Representative per-operation breakdown for DWH2 on the 16384 x 4096 Gaussian case:
+Fresh DWH2-only reference runs on the same benchmark path:
+
+- rectangular command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --methods dwh2 --dwh2-mode rectangular --output runs/dwh2_rectangular_head_20260402.jsonl`
+- bounded command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --methods dwh2 --dwh2-mode smallside_bounded --output runs/dwh2_smallside_bounded_head_20260402.jsonl`
+
+| Mode | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
+| --- | ---: | ---: | ---: |
+| `rectangular` | 389.50 ms | **0.03147** | 0.07454 |
+| `smallside_bounded` | **388.55 ms** | 0.03537 | **0.07029** |
+
+In the current full CLI benchmark path, `smallside_bounded` is faster on `6/11`
+cases and lower on `q_fro_error` on `8/11` cases. It remains the fastest
+default by median runtime, while `rectangular` stays available as the reference
+kernel.
+
+## Representative historical profiles
+
+These profile tables were captured before the bounded mode became the default.
+They are still useful for rough operation mix, but they are not the current
+headline benchmark numbers.
+
+Representative per-operation breakdown for DWH2 on the 16384 x 4096 Gaussian
+case:
 
 - profile basis: eager mode, 2 warm-up calls, 5 profiled iterations
 - grouping rule: `aten::mm` split by exact input shapes; inclusive `device_time_total` for high-level nodes
@@ -107,11 +132,13 @@ Detailed per-operation breakdown for PE5 on the same shape:
 
 ## Normalizer sweep snapshot
 
-Fresh corrected sweep on this machine with the shared $\ell_0 = 10^{-3}$ setting and the scale-relative reference cutoff:
+Fresh corrected sweep on this machine with the shared $\ell_0 = 10^{-3}$ setting,
+the scale-relative reference cutoff, and the default DWH2 `smallside_bounded`
+mode:
 
-- sweep command: `uv run norm-sweep --device cuda --tf32 --quiet --output runs/norm_sweep_spectral_bound_full_20260402.jsonl`
+- sweep command: `uv run norm-sweep --device cuda --tf32 --quiet --output runs/norm_sweep_smallside_bounded_20260402.jsonl`
 - shape: 16384 x 4096
 - `spectral_bound` conservatism: `0/22` underestimates vs true spectral norm in the method-case comparison
 - versus `fro`: improved `q_fro_error` on `7/11` DWH2 cases and `10/11` PE5 cases
-- DWH2 median `q_fro_error`: `0.10788 -> 0.03147` vs `fro`
+- DWH2 median `q_fro_error`: `0.10605 -> 0.03537` vs `fro`
 - PE5 median `q_fro_error`: `0.12519 -> 0.08877` vs `fro`

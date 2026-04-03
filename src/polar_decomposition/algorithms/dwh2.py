@@ -278,9 +278,17 @@ def _dwh2_smallside_bounded(
     k.diagonal().add_(1.0)
     torch.mm(k, m_acc, out=buf)
     # Evaluate M @ buf as alpha * buf + beta * (H @ buf) so the large identity
-    # contribution stays in exact scalar arithmetic and only the bounded H part
-    # goes through TF32 matmul.
-    torch.mm(h, buf, out=k)
+    # contribution stays in exact scalar arithmetic. The H @ buf product is
+    # further unit-diagonal scaled to push the TF32 GEMM onto a correlation-like
+    # matrix instead of the raw SPD block.
+    sh = torch.sqrt(torch.clamp(h.diagonal(), min=1e-30))
+    invsh = sh.reciprocal()
+    scratch.copy_(buf)
+    scratch.mul_(sh[:, None])
+    gram.copy_(h)
+    gram.mul_(invsh[:, None]).mul_(invsh[None, :])
+    torch.mm(gram, scratch, out=k)
+    k.mul_(sh[:, None])
     buf.mul_(alpha0)
     k.mul_(beta0).add_(buf)
     k.mul_(delta_scale)

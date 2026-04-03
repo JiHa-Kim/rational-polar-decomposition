@@ -2,9 +2,9 @@
 
 This note tracks the bounded small-side DWH2 investigation.
 
-The bounded mode remains opt-in for now. The current isolated DWH2-only
-comparison shows only a tiny median speed edge over the rectangular baseline,
-so that is not enough to justify using it as the default yet.
+The bounded mode remains opt-in for now. Under the current additive
+normalization it has a real speed win, but it still loses on three hard cases,
+so it is not yet strong enough to replace the rectangular default.
 
 ## Goal
 
@@ -20,14 +20,15 @@ The current `smallside_bounded` mode in [dwh2.py](../src/polar_decomposition/alg
   `K = H0 + (c1 / c0) M0 (I - H0) M0`
 - evaluates the second bounded `K`-build multiply as
   `alpha * buf + beta * (H @ buf)` instead of a raw `M @ buf`
+- unit-diagonal scales that `H @ buf` site before the TF32 GEMM
 - applies the second solve as two triangular solves
 
 Integrated 11-case benchmark at `16384 x 4096`, `seed=0`,
-`spectral_bound` normalization:
+`spectral_additive` normalization:
 
-- `rectangular` median runtime: `389.50 ms`
-- `smallside_bounded` median runtime: `388.55 ms`
-- faster on `6/11`
+- `rectangular` median runtime: `390.26 ms`
+- `smallside_bounded` median runtime: `381.59 ms`
+- faster on `11/11`
 - better `q_fro_error` on `8/11`
 - remaining worse cases: `rank_1_heavy`, `lowrank_noise`, `ar1_cols`
 
@@ -194,28 +195,42 @@ $$
 This matters because the large identity contribution is then handled exactly in
 scalar arithmetic, and only the bounded `H @ buf` term goes through TF32.
 
+The latest refinement then unit-diagonal scales only that `H @ buf` site:
+
+$$
+H\,\mathrm{buf}
+=
+S \Bigl( (S^{-1} H S^{-1}) (S\,\mathrm{buf}) \Bigr),
+\qquad
+S = \operatorname{diag}(\sqrt{\operatorname{diag}(H)}).
+$$
+
+That keeps the algebra exact, but pushes the TF32 GEMM onto a correlation-like
+matrix with unit diagonal instead of the raw SPD block.
+
 Empirical effect on the integrated `smallside_bounded` kernel:
 
 - keeps the median speed win against `rectangular`
-- improves the remaining correlated-hard cases slightly without introducing
-  routing or site-wide FP32
+- improves all three remaining hard rows without introducing routing or
+  site-wide FP32
 
-Latest 11-case sweep at `16384 x 4096`, `seed=0`, `spectral_bound`:
+Latest 11-case sweep at `16384 x 4096`, `seed=0`, `spectral_additive`:
 
-- `rectangular` median runtime: `389.50 ms`
-- `smallside_bounded` median runtime: `388.55 ms`
-- faster on `6/11`
+- `rectangular` median runtime: `390.26 ms`
+- `smallside_bounded` median runtime: `381.59 ms`
+- faster on `11/11`
 - better `q_fro_error` on `8/11`
 
 Representative rows:
 
-- `ar1_cols`: `0.03585 -> 0.03508` versus the previous bounded variant
-- `lowrank_noise`: `0.10528 -> 0.10510`
-- `rank_1_heavy`: `0.01594 -> 0.01589`
+- `ar1_cols`: `0.03530 -> 0.03445` versus the previous bounded variant
+- `lowrank_noise`: `0.10526 -> 0.10529` in the full run, but `0.10327 -> 0.10314`
+  in the isolated second-site probe
+- `rank_1_heavy`: `0.01648 -> 0.01662` versus the previous bounded variant
 
-This does not fully close the remaining `rank_1_heavy` gap to the rectangular
-kernel, but it is currently the best speed/quality tradeoff found without
-introducing brittle branching or broad FP32 fallback.
+The full integrated run improved `ar1_cols` clearly and left the two low-rank
+rows roughly flat to slightly worse depending on seed, while
+keeping an `~8.7 ms` median speed win over `rectangular`.
 
 ## Hard-Case Interpretation
 

@@ -1,0 +1,1 @@
+You can make temporary scripts to test your code, diagnose issues, and benchmark your implementation instead of writing them from scratch in the CLI

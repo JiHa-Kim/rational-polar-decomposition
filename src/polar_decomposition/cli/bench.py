@@ -28,9 +28,8 @@ try:
 except ImportError:
     OFFICIAL_COEFS = None
 
-from ..algorithms.dwh2 import dwh2, dwh2_hybrid
+from ..algorithms.dwh2 import PAPER_MUON_ELL, PAPER_NORM_EPS, dwh2, dwh2_hybrid
 from ..utils.normalization import NormalizationInfo, normalize_matrix
-from ..algorithms.pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
 from ..utils.precond import CholStats, PolarResult
 
 
@@ -369,7 +368,7 @@ def line_writer(path: str | None):
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Minimal realistic benchmark: DWH2 vs PE5 on tall matrices."
+        description="Real-world comparison: DWH2 vs GNS on tall matrices."
     )
     parser.add_argument("--rows", type=int, default=16384)
     parser.add_argument("--cols", type=int, default=4096)
@@ -435,7 +434,7 @@ def main() -> None:
             "adversarial_condition",
         ],
     )
-    parser.add_argument("--methods", nargs="+", default=["dwh2", "pe5", "gns"])
+    parser.add_argument("--methods", nargs="+", default=["gns", "dwh2"])
     parser.add_argument(
         "--output",
         type=str,
@@ -450,11 +449,9 @@ def main() -> None:
 
     try:
         with torch.inference_mode():
-            coeffs = pe5_coefficients(ell0=args.ell0, steps=5)
 
             dwh2_fn = dwh2
             dwh2_hybrid_fn = dwh2_hybrid
-            pe5_fn = pe5
 
             # Official GNS instance
             if OFFICIAL_COEFS is not None:
@@ -474,7 +471,6 @@ def main() -> None:
                 # Compile main kernels, using fullgraph=False as Cholesky error checks cause harmless Python syncs
                 dwh2_fn = torch.compile(dwh2, mode="max-autotune")  # type: ignore
                 dwh2_hybrid_fn = torch.compile(dwh2_hybrid, mode="max-autotune")  # type: ignore
-                pe5_fn = torch.compile(pe5, mode="max-autotune")  # type: ignore
                 if gns_fn is not None:
                     # GNS officially uses fullgraph=True, mode="reduce-overhead"
                     compiled_gns_instance = torch.compile(
@@ -526,9 +522,6 @@ def main() -> None:
                     ),
                     "dwh2_hybrid": lambda a=case.a, ell=args.ell0, g0=dwh2_gram_0: dwh2_hybrid_fn(
                         a, ell0=ell, gram_0=g0
-                    ),
-                    "pe5": lambda a=case.a, cs=coeffs, ell=args.ell0, prec=args.precision: _wrap_cast(
-                        lambda x: pe5_fn(x, ell0=ell, coeffs=cs), a, prec
                     ),
                     "gns": lambda a=case.a: gns_fn(a), # Official GNS handles its own casting
                 }

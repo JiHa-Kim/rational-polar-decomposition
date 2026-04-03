@@ -16,9 +16,8 @@ except ImportError:
     GramNewtonSchulz = None
 
 from .bench import make_case, measure, set_fast_matmul
-from ..algorithms.dwh2 import dwh2, dwh2_hybrid
+from ..algorithms.dwh2 import PAPER_MUON_ELL, PAPER_NORM_EPS, dwh2, dwh2_hybrid
 from ..utils.normalization import normalize_matrix
-from ..algorithms.pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
 
 
 def compile_fn(
@@ -63,7 +62,7 @@ def main() -> None:
     parser.add_argument(
         "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
     )
-    parser.add_argument("--method", choices=["dwh2", "dwh2_hybrid", "gns", "pe5"], default="pe5")
+    parser.add_argument("--method", choices=["dwh2", "dwh2_hybrid", "gns"], default="gns")
     parser.add_argument(
         "--case",
         type=str,
@@ -85,7 +84,6 @@ def main() -> None:
     parser.add_argument("--trace-dir", type=str, default="profiles")
     parser.add_argument("--tf32", action="store_true")
     parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
-    parser.add_argument("--symmetrize-pe5", action="store_true")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -104,7 +102,6 @@ def main() -> None:
         denom = normalization.scale + PAPER_NORM_EPS
         dwh2_gram_0 = normalization.gram / (denom * denom)
 
-    coeffs = pe5_coefficients(ell0=PAPER_MUON_ELL, steps=5)
 
     if args.method == "dwh2":
         def base(x):
@@ -134,13 +131,7 @@ def main() -> None:
             return gns_obj(x)
 
     else:
-        def base(x):
-            return pe5(
-                x,
-                ell0=PAPER_MUON_ELL,
-                coeffs=coeffs,
-                symmetrize_inputs=args.symmetrize_pe5,
-            )
+        raise ValueError(f"unknown method {args.method}")
 
     fn = compile_fn(base, args.mode)
 

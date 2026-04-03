@@ -451,6 +451,11 @@ def main() -> None:
                     eps=PAPER_NORM_EPS,
                 )
                 a = a.contiguous()
+                # Derive the normalized Gram: G_norm = G / (scale + eps)^2
+                dwh2_gram_0 = None
+                if normalization.gram is not None:
+                    denom = normalization.scale + PAPER_NORM_EPS
+                    dwh2_gram_0 = normalization.gram / (denom * denom)
                 case = Case(name=case.name, a=a)
 
                 ref = None
@@ -463,7 +468,7 @@ def main() -> None:
                         torch.cuda.empty_cache()
 
                 methods: dict[str, Callable[[], object]] = {
-                    "dwh2": lambda a=case.a, ell=args.ell0: dwh2_fn(a, ell0=ell),
+                    "dwh2": lambda a=case.a, ell=args.ell0, g0=dwh2_gram_0: dwh2_fn(a, ell0=ell, gram_0=g0),
                     "pe5": lambda a=case.a, cs=coeffs, ell=args.ell0: pe5_fn(
                         a, ell0=ell, coeffs=cs
                     ),

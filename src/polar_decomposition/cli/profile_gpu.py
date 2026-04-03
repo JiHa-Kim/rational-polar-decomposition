@@ -87,11 +87,17 @@ def main() -> None:
     set_fast_matmul(args.tf32)
 
     case = make_case(args.case, args.rows, args.cols, device=device, seed=args.seed)
-    a, _ = normalize_matrix(
+    a, normalization = normalize_matrix(
         case.a,
         eps=PAPER_NORM_EPS,
     )
     a = a.contiguous()
+
+    # Reuse the normalization Gram for DWH2 if available
+    dwh2_gram_0 = None
+    if normalization.gram is not None:
+        denom = normalization.scale + PAPER_NORM_EPS
+        dwh2_gram_0 = normalization.gram / (denom * denom)
 
     coeffs = pe5_coefficients(ell0=PAPER_MUON_ELL, steps=5)
 
@@ -101,6 +107,7 @@ def main() -> None:
             return dwh2(
                 x,
                 ell0=args.ell0,
+                gram_0=dwh2_gram_0,
             )
     else:
 

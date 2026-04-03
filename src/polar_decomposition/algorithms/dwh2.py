@@ -140,8 +140,15 @@ def dwh2(
     ell0: float = PAPER_MUON_ELL,
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,
+    gram_0: torch.Tensor | None = None,
 ) -> PolarResult:
-    """Two-step bounded small-side DWH update."""
+    """Two-step bounded small-side DWH update.
+
+    If *gram_0* is supplied it is used as the initial small-side Gram matrix
+    G = X^T X instead of recomputing it internally.  This lets the caller
+    share the Gram that was already computed during normalization, eliminating
+    one full rectangular GEMM from the critical path.
+    """
     assert a.ndim == 2
     transposed = a.shape[0] < a.shape[1]
     x = a.mT.contiguous() if transposed else a
@@ -163,7 +170,10 @@ def dwh2(
     buf = torch.empty((n, n), device=x.device, dtype=x.dtype)
     scratch = torch.empty((n, n), device=x.device, dtype=x.dtype)
 
-    _block_gram_tree_(x, gram)
+    if gram_0 is not None:
+        gram.copy_(gram_0)
+    else:
+        _block_gram_tree_(x, gram)
     h.copy_(gram).mul_(cc0)
     h.diagonal().add_(1.0)
     l0, s0 = _smallside_factor(

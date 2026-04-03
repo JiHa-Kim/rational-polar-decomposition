@@ -17,7 +17,8 @@ import os
 # Add third_party to path for official GNS
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 # src/polar_decomposition/cli/bench.py -> src/polar_decomposition/cli -> src/polar_decomposition -> src -> root
-root_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_this_dir))))
+root_path = os.path.dirname(os.path.dirname(os.path.dirname(_this_dir)))
+
 third_party_path = os.path.join(root_path, "third_party", "gram-newton-schulz")
 
 if os.path.exists(third_party_path):

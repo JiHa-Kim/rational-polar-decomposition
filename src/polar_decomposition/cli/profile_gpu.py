@@ -9,11 +9,23 @@ from typing import Callable
 
 import torch
 from torch.profiler import ProfilerActivity, profile
+import os
+import sys
+
+# Add third_party to path for official GNS
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+# src/polar_decomposition/cli/profile_gpu.py -> src/polar_decomposition/cli -> src/polar_decomposition -> src -> root
+root_path = os.path.dirname(os.path.dirname(os.path.dirname(_this_dir)))
+third_party_path = os.path.join(root_path, "third_party", "gram-newton-schulz")
+
+if os.path.exists(third_party_path):
+    sys.path.append(third_party_path)
 
 try:
     from gram_newton_schulz import GramNewtonSchulz
 except ImportError:
     GramNewtonSchulz = None
+
 
 from .bench import make_case, measure, set_fast_matmul
 from ..algorithms.dwh2 import PAPER_MUON_ELL, PAPER_NORM_EPS, dwh2

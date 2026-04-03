@@ -16,7 +16,8 @@ except ImportError:
     GramNewtonSchulz = None
 
 from .bench import make_case, measure, set_fast_matmul
-from ..algorithms.dwh2 import PAPER_MUON_ELL, PAPER_NORM_EPS, dwh2, dwh2_hybrid
+from ..algorithms.dwh2 import PAPER_MUON_ELL, PAPER_NORM_EPS, dwh2
+
 from ..utils.normalization import normalize_matrix
 
 
@@ -62,7 +63,8 @@ def main() -> None:
     parser.add_argument(
         "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
     )
-    parser.add_argument("--method", choices=["dwh2", "dwh2_hybrid", "gns"], default="gns")
+    parser.add_argument("--method", choices=["dwh2", "gns"], default="gns")
+
     parser.add_argument(
         "--case",
         type=str,
@@ -111,14 +113,7 @@ def main() -> None:
                 gram_0=dwh2_gram_0,
             )
 
-    elif args.method == "dwh2_hybrid":
-        def base(x):
-            # Pass gram_0=None to profile the initial Gram accumulation for a fair comparison
-            return dwh2_hybrid(
-                x,
-                ell0=args.ell0,
-                gram_0=None,
-            )
+
 
 
     elif args.method == "gns":

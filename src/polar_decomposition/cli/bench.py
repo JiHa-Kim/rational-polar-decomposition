@@ -28,7 +28,8 @@ try:
 except ImportError:
     OFFICIAL_COEFS = None
 
-from ..algorithms.dwh2 import PAPER_MUON_ELL, PAPER_NORM_EPS, dwh2, dwh2_hybrid
+from ..algorithms.dwh2 import PAPER_MUON_ELL, PAPER_NORM_EPS, dwh2
+
 from ..utils.normalization import NormalizationInfo, normalize_matrix
 from ..utils.precond import CholStats, PolarResult
 
@@ -451,7 +452,7 @@ def main() -> None:
         with torch.inference_mode():
 
             dwh2_fn = dwh2
-            dwh2_hybrid_fn = dwh2_hybrid
+
 
             # Official GNS instance
             if OFFICIAL_COEFS is not None:
@@ -470,7 +471,7 @@ def main() -> None:
             if args.compile:
                 # Compile main kernels, using fullgraph=False as Cholesky error checks cause harmless Python syncs
                 dwh2_fn = torch.compile(dwh2, mode="max-autotune")  # type: ignore
-                dwh2_hybrid_fn = torch.compile(dwh2_hybrid, mode="max-autotune")  # type: ignore
+
                 if gns_fn is not None:
                     # GNS officially uses fullgraph=True, mode="reduce-overhead"
                     compiled_gns_instance = torch.compile(
@@ -520,10 +521,8 @@ def main() -> None:
                     "dwh2": lambda a=case.a, ell=args.ell0, g0=dwh2_gram_0, prec=args.precision: _wrap_cast(
                         lambda x: dwh2_fn(x, ell0=ell, gram_0=g0), a, prec
                     ),
-                    "dwh2_hybrid": lambda a=case.a, ell=args.ell0, g0=dwh2_gram_0: dwh2_hybrid_fn(
-                        a, ell0=ell, gram_0=g0
-                    ),
                     "gns": lambda a=case.a: gns_fn(a), # Official GNS handles its own casting
+
                 }
                 
                 if gns_fn is None:

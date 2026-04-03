@@ -410,29 +410,4 @@ def dwh2(
         gram_0=gram_0,
         large_matmul_dtype=large_matmul_dtype,
     )
-
-
-def dwh2_hybrid(
-    a: torch.Tensor,
-    *,
-    ell0: float = PAPER_MUON_ELL,
-    scaled_jitter_scale: float = 2.0,
-    diag_floor_rel: float = 0.0,
-    gram_0: torch.Tensor | None = None,
-    large_matmul_dtype: torch.dtype | None = None,
-) -> PolarResult:
-    """Alias kept for API compatibility.
-
-    The new formulation already is the fast/stable hybrid:
-      - small-side in fp32/fp64
-      - big final rectangular apply in fp16/bf16 if requested
-      - only 2 rectangular multiplies total
-    """
-    return _dwh2_core(
-        a,
-        ell0=ell0,
-        scaled_jitter_scale=scaled_jitter_scale,
-        diag_floor_rel=diag_floor_rel,
-        gram_0=gram_0,
-        large_matmul_dtype=large_matmul_dtype,
-    )
+

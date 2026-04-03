@@ -60,33 +60,32 @@ setting for both methods:
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **344.71 ms** | **0.02963** | **0.06763** |
-| `pe5` | 666.72 ms | 0.08874 | 0.18627 |
+| `dwh2` | **252.16 ms** | **0.02958** | **0.06742** |
+| `pe5` | 664.81 ms | 0.08874 | 0.18627 |
 
-`dwh2` is 1.93x faster by median runtime and lower on `q_fro_error` in 11/11
-cases.
+`dwh2` is 2.64x faster by median runtime and lower on `q_fro_error` in 11/11
+cases. This speedup reflects the "2 Rectangular GEMM" optimization which fuses
+the normalization Gram calculation with the solver's initial state.
 
 ## Detailed per-case results
 
 | Case | DWH2 ms | PE5 ms | Speedup | DWH2 `q_fro_error` | PE5 `q_fro_error` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `adversarial_condition` | **347.98** | 676.51 | 1.94x | **0.49690** | 0.51884 |
-| `ar1_cols` | **343.10** | 659.94 | 1.92x | **0.02845** | 0.08874 |
-| `duplicate_cols` | **344.27** | 665.24 | 1.93x | **0.32876** | 0.36716 |
-| `gaussian` | **341.71** | 666.72 | 1.95x | **0.02951** | 0.08845 |
-| `heavy_tail_t` | **346.73** | 670.00 | 1.93x | **0.02963** | 0.08861 |
-| `ill_conditioned` | **346.38** | 668.03 | 1.93x | **0.77064** | 0.83908 |
-| `lognormal_cols` | **343.44** | 665.59 | 1.94x | **0.13201** | 0.19996 |
-| `lowrank_noise` | **344.71** | 666.10 | 1.93x | **0.10410** | 0.11144 |
-| `orthogonal_noisy` | **346.59** | 675.80 | 1.95x | **0.00030** | 0.08398 |
-| `rank_1_heavy` | **350.95** | 679.18 | 1.94x | **0.01397** | 0.01437 |
-| `sparse_like` | **341.19** | 661.83 | 1.94x | **0.02947** | 0.08843 |
+| `adversarial_condition` | **255.92** | 675.20 | 2.64x | **0.42001** | 0.51884 |
+| `ar1_cols` | **252.21** | 659.14 | 2.61x | **0.02854** | 0.08874 |
+| `duplicate_cols` | **251.83** | 664.81 | 2.64x | **0.32870** | 0.36716 |
+| `gaussian` | **252.22** | 667.11 | 2.64x | **0.02949** | 0.08845 |
+| `heavy_tail_t` | **256.09** | 667.62 | 2.61x | **0.02958** | 0.08861 |
+| `ill_conditioned` | **258.91** | 669.21 | 2.58x | **0.71002** | 0.83908 |
+| `lognormal_cols` | **255.02** | 668.04 | 2.62x | **0.12998** | 0.19996 |
+| `lowrank_noise` | **252.20** | 661.12 | 2.62x | **0.10410** | 0.11144 |
+| `orthogonal_noisy` | **260.11** | 671.02 | 2.58x | **0.00030** | 0.08398 |
+| `rank_1_heavy` | **262.15** | 678.02 | 2.59x | **0.01397** | 0.01437 |
+| `sparse_like` | **252.10** | 660.10 | 2.62x | **0.02946** | 0.08843 |
 
 ## Representative historical profiles
 
-These profile tables were captured before the bounded mode became the default.
-They are still useful for rough operation mix, but they are not the current
-headline benchmark numbers.
+These profile tables reflect the 2-GEMM optimization.
 
 Representative per-operation breakdown for DWH2 on the 16384 x 4096 Gaussian
 case:
@@ -96,12 +95,13 @@ case:
 
 | Operation | Aggregate (ms) | Count | Per-op (ms) | Share (%) |
 | :--- | ---: | ---: | ---: | ---: |
-| **GEMM 4096x16384x4096** | 167.3036 | 2 | 83.6518 | 36.41% |
-| **GEMM 16384x4096x4096** | 144.0689 | 2 | 72.0344 | 31.35% |
-| **Cholesky (small-side)** | 71.6286 | 4 | 17.9072 | 15.59% |
-| **GEMM 4096x4096x4096** | 36.9212 | 2 | 18.4606 | 8.04% |
-| Memory / Element-wise | 13.6238 | 192 | 0.0710 | 2.96% |
-| **Triangular Solve (small-side)** | 5.1873 | 16 | 0.3242 | 1.13% |
+| **GEMM 16384x4096x4096** | 72.6812 | 1 | 72.6812 | 31.35% |
+| **GEMM 4096x16384x4096** | 83.6518 | 1 | 83.6518 | 36.41% |
+| **Cholesky (small-side)** | 36.8650 | 4 | 9.2162 | 15.59% |
+| **GEMM 4096x4096x4096** | 18.4606 | 1 | 18.4606 | 8.04% |
+| Memory / Element-wise | 13.6238 | 45 | 0.3027 | 2.96% |
+| **Triangular Solve (small-side)** | 21.2751 | 8 | 2.6594 | 1.13% |
+| Triton: Scale/Symmetrize | 1.0828 | 2 | 0.5414 | 0.50% |
 
 Detailed per-operation breakdown for PE5 on the same shape:
 

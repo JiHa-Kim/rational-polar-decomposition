@@ -7,7 +7,6 @@ from ..utils.precond import (
     CholStats,
     PolarResult,
     _form_u,
-    _scale_and_symmetrize,
 )
 
 _SMALLSIDE_GRAM_BLOCK_ROWS = 1024
@@ -75,62 +74,65 @@ def _block_gram_tree_(
     return out
 
 
-def _smallside_factor(
+def _smallside_factor_stable(
     a: torch.Tensor,
     stats: CholStats,
     *,
     scratch: torch.Tensor,
-    diag_floor_rel: float,
-    base_shift_scale: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Factor a small SPD block after unit-diagonal scaling, with retry jitter."""
-    mat, s, diag_floored = _scale_and_symmetrize(
-        a,
-        diag_floor_rel,
-        scratch=scratch,
-    )
+    jitter_scale: float = 2.0,
+) -> torch.Tensor:
+    """Stable factor for well-conditioned DWH Gram/Correction matrix.
 
-    base_shift = max(base_shift_scale * a.shape[0] * _form_u(a.dtype), 1e-7)
-    shifted = False
-    retries = 0
-    jitter = 0.0
+    DWH matrices H = I + c G or A1 = I + ... are theoretically well-conditioned
+    (all eig >= 1). We skip diagonal scaling and use a small unconditional
+    shift to ensure SPD-ness in FP32/TF32 without retries.
+    """
+    n = a.shape[0]
+    u = _form_u(a.dtype)
+    # Use a larger initial jitter — O(N*eps) is roughly the accumulation error.
+    jitter = max(jitter_scale * n * u, 1e-4)
 
-    l, info = torch.linalg.cholesky_ex(mat, check_errors=False)
-    while int(info.item()) != 0 and retries < 6:
-        shifted = True
-        jitter = base_shift * (10.0**retries)
-        scratch.copy_(mat)
-        scratch.diagonal().add_(jitter)
-        l, info = torch.linalg.cholesky_ex(scratch, check_errors=False)
-        retries += 1
+    # Symmetrize
+    scratch.copy_(a.mT)
+    a.add_(scratch).mul_(0.5)
+    # Simple unconditional shift
+    a.diagonal().add_(jitter)
+
+    l, info = torch.linalg.cholesky_ex(a, check_errors=False)
 
     if int(info.item()) != 0:
-        shifted = True
-        jitter = base_shift * (10.0**retries)
-        scratch.copy_(mat)
-        scratch.diagonal().add_(jitter)
-        l = torch.linalg.cholesky(scratch)
-        retries += 1
+        # Fallback for extreme cases — larger shift
+        retries = 1
+        jitter_step = jitter * 10.0
+        while int(info.item()) != 0 and retries < 5:
+            a.diagonal().add_(jitter_step)
+            jitter += jitter_step
+            l, info = torch.linalg.cholesky_ex(a, check_errors=False)
+            retries += 1
+            jitter_step *= 10.0
+        
+        if int(info.item()) != 0:
+            # Last ditch: huge shift
+            a.diagonal().add_(0.1)
+            l = torch.linalg.cholesky(a)
+            jitter += 0.1
+            retries += 1
+            
+        stats.update(shifted=True, retries=retries, jitter=float(jitter), diag_floored=0)
+    else:
+        stats.update(shifted=True, retries=0, jitter=jitter, diag_floored=0)
 
-    stats.update(
-        shifted=shifted,
-        retries=retries,
-        jitter=jitter,
-        diag_floored=diag_floored,
-    )
-    return l, s
+    return l
 
 
-def _smallside_inverse_from_factor(
+def _inverse_from_cholesky_solve(
     l: torch.Tensor,
-    s: torch.Tensor,
     *,
     out: torch.Tensor,
 ) -> torch.Tensor:
     out.zero_()
     out.diagonal().fill_(1.0)
     out.copy_(torch.cholesky_solve(out, l))
-    out.mul_(s[:, None]).mul_(s[None, :])
     return out
 
 
@@ -176,15 +178,13 @@ def dwh2(
         _block_gram_tree_(x, gram)
     h.copy_(gram).mul_(cc0)
     h.diagonal().add_(1.0)
-    l0, s0 = _smallside_factor(
+    l0 = _smallside_factor_stable(
         h,
         stats,
         scratch=scratch,
-        diag_floor_rel=diag_floor_rel,
-        base_shift_scale=scaled_jitter_scale,
+        jitter_scale=scaled_jitter_scale,
     )
-    _smallside_inverse_from_factor(l0, s0, out=h)
-    _symmetrize_(h, scratch)
+    _inverse_from_cholesky_solve(l0, out=h)
 
     k.copy_(h).mul_(-1.0)
     k.diagonal().add_(1.0)
@@ -209,21 +209,16 @@ def dwh2(
     m_acc.copy_(h).mul_(beta0)
     m_acc.diagonal().add_(alpha0)
 
-    l1, s1 = _smallside_factor(
+    l1 = _smallside_factor_stable(
         buf,
         stats,
         scratch=scratch,
-        diag_floor_rel=diag_floor_rel,
-        base_shift_scale=scaled_jitter_scale,
+        jitter_scale=scaled_jitter_scale,
     )
-    # Final update: K = alpha1 M0 + beta1 (M0 A1^{-1}). Applying the second
-    # inverse directly to M0 avoids forming H1 explicitly and removes the last
-    # small-side GEMM from the bounded path.
+    # Final update: K = alpha1 M0 + beta1 (M0 A1^{-1}).
     k.copy_(m_acc)
-    k.mul_(s1[None, :])
     torch.linalg.solve_triangular(l1.mT, k, upper=True, left=False, out=k)
     torch.linalg.solve_triangular(l1, k, upper=False, left=False, out=k)
-    k.mul_(s1[None, :])
     k.mul_(beta1)
     k.add_(m_acc, alpha=alpha1)
 
@@ -231,3 +226,85 @@ def dwh2(
     if transposed:
         x = x.mT.contiguous()
     return PolarResult(q=x, stats=stats)
+
+
+def dwh2_hybrid(
+    a: torch.Tensor,
+    *,
+    ell0: float = PAPER_MUON_ELL,
+    scaled_jitter_scale: float = 2.0,
+    diag_floor_rel: float = 0.0,
+    gram_0: torch.Tensor | None = None,
+) -> PolarResult:
+    """Hybrid precision DWH2.
+
+    Uses FP16 for massive O(MN^2) GEMMs and TF32 for O(N^3) solver steps.
+    """
+    assert a.ndim == 2
+    transposed = a.shape[0] < a.shape[1]
+    x_orig = a.mT.contiguous() if transposed else a
+
+    # 1. Cast massive matrix to FP16
+    x = x_orig.half()
+    n = x.shape[1]
+    stats = CholStats()
+
+    # 2. Compute Gram in FP32 (for stability, O(MN^2) is still fast on Ampere)
+    # If we use FP16 for the Gram, DWH2 (2-step) fails because it needs precision
+    # in the rational coefficients. 
+    gram = torch.empty((n, n), device=x.device, dtype=torch.float32)
+    if gram_0 is not None:
+        gram.copy_(gram_0)
+    else:
+        # Use a high-precision Gram accumulation
+        _block_gram_tree_(x_orig, gram)
+
+    coeffs = _dwh_schedule(ell0, steps=2)
+    (aa0, bb0, cc0), (aa1, bb1, cc1) = coeffs
+    alpha0 = bb0 / cc0
+    beta0 = aa0 - alpha0
+    alpha1 = bb1 / cc1
+    beta1 = aa1 - alpha1
+    delta_scale = cc1 / cc0
+
+    h = torch.empty((n, n), device=x.device, dtype=torch.float32)
+    m_acc = torch.empty((n, n), device=x.device, dtype=torch.float32)
+    k = torch.empty((n, n), device=x.device, dtype=torch.float32)
+    buf = torch.empty((n, n), device=x.device, dtype=torch.float32)
+    scratch = torch.empty((n, n), device=x.device, dtype=torch.float32)
+
+    h.copy_(gram).mul_(cc0)
+    h.diagonal().add_(1.0)
+    l0 = _smallside_factor_stable(h, stats, scratch=scratch, jitter_scale=scaled_jitter_scale)
+    _inverse_from_cholesky_solve(l0, out=h)
+
+    m_k = h.mul(-1.0)
+    m_k.diagonal().add_(1.0)
+    buf.copy_(gram).mul_(delta_scale * cc0 * alpha0 * alpha0)
+
+    # Simplified hybrid m_acc logic
+    sh = torch.sqrt(torch.clamp(h.diagonal(), min=1e-30))
+    invsh = sh.reciprocal()
+    scratch.copy_(m_k).mul_(sh[:, None])
+    m_acc.copy_(h).mul_(invsh[:, None]).mul_(invsh[None, :])
+    buf.addmm_(m_acc, scratch, alpha=delta_scale * beta0 * beta0, beta=1.0)
+    buf.add_(m_k, alpha=delta_scale * 2.0 * alpha0 * beta0)
+    buf.diagonal().add_(1.0)
+
+    l1 = _smallside_factor_stable(buf, stats, scratch=scratch, jitter_scale=scaled_jitter_scale)
+
+    m_acc.copy_(h).mul_(beta0).diagonal().add_(alpha0)
+    k.copy_(m_acc)
+    torch.linalg.solve_triangular(l1.mT, k, upper=True, left=False, out=k)
+    torch.linalg.solve_triangular(l1, k, upper=False, left=False, out=k)
+    k.mul_(beta1).add_(m_acc, alpha=alpha1)
+
+    # 4. Final correction in FP16
+    correction = k.half()
+    res = x @ correction
+
+    # 5. Return in original dtype
+    out = res.to(x_orig.dtype)
+    if transposed:
+        out = out.mT.contiguous()
+    return PolarResult(q=out, stats=stats)

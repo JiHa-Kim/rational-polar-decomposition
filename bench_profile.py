@@ -1,0 +1,327 @@
+from __future__ import annotations
+
+import argparse
+import importlib
+import json
+import math
+import statistics
+import time
+from dataclasses import asdict, dataclass
+from typing import Callable
+
+import torch
+
+import dwh2
+
+
+def set_fast_matmul(tf32: bool) -> None:
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = tf32
+        torch.backends.cudnn.allow_tf32 = tf32
+        torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision("high" if tf32 else "highest")
+
+
+def measure(fn: Callable[[], object], trials: int, warmup: int) -> tuple[object, list[float]]:
+    out = None
+    for _ in range(warmup):
+        out = fn()
+    times: list[float] = []
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    for _ in range(trials):
+        torch.cuda.synchronize()
+        start.record()
+        out = fn()
+        end.record()
+        end.synchronize()
+        times.append(float(start.elapsed_time(end)))
+    return out, times
+
+
+def qtq_metrics(q: torch.Tensor) -> tuple[float, float, float, float]:
+    # Returns:
+    # ortho_fro, diag_rms, diag_max, offdiag_fro   (all normalized by sqrt(n) when appropriate)
+    transposed = q.shape[0] < q.shape[1]
+    Q = q.mT.contiguous() if transposed else q
+    Q = Q.float()
+    n = Q.shape[1]
+
+    G = Q.mT @ Q
+    diag = G.diagonal()
+    diag_err = diag - 1.0
+
+    # ortho fro
+    G.diagonal().sub_(1.0)
+    ortho = float(torch.linalg.matrix_norm(G, ord="fro").item() / math.sqrt(n))
+
+    # diag stats
+    diag_rms = float(torch.sqrt(torch.mean(diag_err * diag_err)).item())
+    diag_max = float(torch.max(torch.abs(diag_err)).item())
+
+    # offdiag fro
+    # offdiag_fro^2 = ||G||_F^2 - ||diag(G)||_2^2
+    # use original diag (before subtract) and original ||G||: rebuild cheaply
+    # We already modified G's diag, but can fix it back:
+    G.diagonal().add_(1.0)
+    fro2 = float(torch.sum(G * G).item())
+    diag2 = float(torch.sum(diag * diag).item())
+    offdiag = math.sqrt(max(fro2 - diag2, 0.0)) / math.sqrt(n)
+
+    return ortho, diag_rms, diag_max, float(offdiag)
+
+
+def objective_fp32(q: torch.Tensor, a_norm: torch.Tensor) -> float:
+    return float(torch.sum(q.float() * a_norm.float()).item())
+
+
+def cast_dtype(a: torch.Tensor, dtype: str) -> torch.Tensor:
+    if dtype == "fp16":
+        return a.half()
+    if dtype == "bf16":
+        return a.bfloat16()
+    if dtype == "fp32":
+        return a.float()
+    raise ValueError(dtype)
+
+
+def _randn(shape, *, device: torch.device, seed: int, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    g = torch.Generator(device=device)
+    g.manual_seed(seed)
+    return torch.randn(*shape, device=device, dtype=dtype, generator=g)
+
+
+def make_case(name: str, m: int, n: int, *, device: torch.device, seed: int) -> torch.Tensor:
+    if name == "gaussian":
+        return _randn((m, n), device=device, seed=seed)
+    if name == "lognormal_cols":
+        x = _randn((m, n), device=device, seed=seed)
+        scales = torch.exp(1.5 * _randn((n,), device=device, seed=seed + 1))
+        scales = scales / scales.median().clamp_min(1e-8)
+        return x * scales[None, :]
+    if name == "ar1_cols":
+        rho = 0.995
+        x = _randn((m, n), device=device, seed=seed)
+        coeff = math.sqrt(max(1.0 - rho * rho, 0.0))
+        powers = torch.pow(
+            torch.tensor(rho, device=device, dtype=x.dtype),
+            torch.arange(n, device=device, dtype=x.dtype),
+        )
+        scale = torch.full((n,), coeff, device=device, dtype=x.dtype)
+        scale[0] = 1.0
+        scale[1:] /= powers[1:]
+        a = torch.cumsum(x * scale[None, :], dim=1)
+        a.mul_(powers[None, :])
+        return a
+    if name == "duplicate_cols":
+        k = max(64, n // 16)
+        base = _randn((m, k), device=device, seed=seed)
+        reps = (n + k - 1) // k
+        tiled = base.repeat(1, reps)[:, :n]
+        noise = 1e-3 * _randn((m, n), device=device, seed=seed + 1)
+        return tiled + noise
+    if name == "lowrank_noise":
+        r = min(64, n // 8)
+        u = _randn((m, r), device=device, seed=seed)
+        v = _randn((r, n), device=device, seed=seed + 1)
+        noise = 1e-3 * _randn((m, n), device=device, seed=seed + 2)
+        return u @ v + noise
+    if name == "ill_conditioned":
+        x = _randn((m, n), device=device, seed=seed)
+        v = torch.linalg.qr(_randn((n, n), device=device, seed=seed + 1))[0]
+        s = torch.logspace(0, -6, steps=n, device=device, dtype=x.dtype)
+        return (x * s[None, :]) @ v
+    if name == "heavy_tail_t":
+        z = _randn((m, n), device=device, seed=seed)
+        chi2 = _randn((m, n), device=device, seed=seed + 1)
+        chi2.square_()
+        tail = _randn((m, n), device=device, seed=seed + 2)
+        chi2.addcmul_(tail, tail)
+        chi2.mul_(0.5).clamp_min_(1e-4).sqrt_()
+        return z / chi2
+    raise ValueError(name)
+
+
+def import_gns():
+    try:
+        return importlib.import_module("gram_newton_schulz")
+    except ModuleNotFoundError:
+        return importlib.import_module("newton_schulz.gram_newton_schulz")
+
+
+def make_gns_core_runner(gns_mod, *, use_kernels: bool, reset_iters: list[int]):
+    try:
+        try:
+            coefs_mod = importlib.import_module("gram_newton_schulz.coefficients")
+        except ModuleNotFoundError:
+            coefs_mod = importlib.import_module("newton_schulz.coefficients")
+        coefs = getattr(coefs_mod, "POLAR_EXPRESS_COEFFICIENTS")
+    except Exception:
+        coefs = getattr(gns_mod, "POLAR_EXPRESS_COEFFICIENTS", None)
+
+    GramNewtonSchulz = getattr(gns_mod, "GramNewtonSchulz")
+    gns_obj = GramNewtonSchulz(
+        ns_use_kernels=bool(use_kernels),
+        ns_coefficients=coefs,  # 5 iters
+        gram_newton_schulz_reset_iterations=list(reset_iters),
+    )
+
+    def core(x_norm_fp16: torch.Tensor) -> torch.Tensor:
+        X = x_norm_fp16.half() if x_norm_fp16.dtype != torch.float16 else x_norm_fp16
+        should_transpose = (X.size(-2) > X.size(-1))
+        if should_transpose:
+            X = X.mT.contiguous()
+        Xb = X.unsqueeze(0)
+
+        ar = getattr(gns_obj, "aspect_ratio_to_use_gram_newton_schulz", 1)
+        use_gram = (max(Xb.shape[-2:]) > ar * min(Xb.shape[-2:]))
+
+        if hasattr(gns_obj, "_gram_newton_schulz") and hasattr(gns_obj, "_standard_newton_schulz"):
+            Yb = gns_obj._gram_newton_schulz(Xb) if use_gram else gns_obj._standard_newton_schulz(Xb)
+            Y = Yb.squeeze(0)
+        else:
+            Y = gns_obj(X)
+
+        if should_transpose:
+            Y = Y.mT.contiguous()
+        return Y
+
+    return core
+
+
+@dataclass(frozen=True)
+class Record:
+    method: str
+    case: str
+    shape: str
+    dtype: str
+    tf32: bool
+    compile: bool
+    trials: int
+    warmup: int
+    dwh2_apply: str
+    median_ms: float
+    min_ms: float
+    ortho_fro: float
+    diag_rms: float
+    diag_max: float
+    offdiag_fro: float
+    objective_fp32: float
+    chol_calls: int
+    chol_shifted_calls: int
+    chol_total_retries: int
+    chol_max_jitter: float
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--device", type=str, default="cuda")
+    ap.add_argument("--no-tf32", action="store_true")
+    ap.add_argument("--compile", action="store_true")
+    ap.add_argument("--trials", type=int, default=30)
+    ap.add_argument("--warmup", type=int, default=10)
+    ap.add_argument("--seeds", type=str, default="0,1")
+    ap.add_argument("--dtype", type=str, default="fp16", choices=["fp16", "bf16", "fp32"])
+    ap.add_argument("--cases", type=str, default="gaussian,lognormal_cols,ar1_cols,duplicate_cols,lowrank_noise,ill_conditioned,heavy_tail_t")
+    ap.add_argument("--shapes", type=str, default="16384x4096,8192x4096,4096x4096")
+    ap.add_argument("--gns-use-kernels", action="store_true")
+    ap.add_argument("--gns-reset-iters", type=str, default="2")
+    ap.add_argument("--ell0", type=float, default=dwh2.PAPER_MUON_ELL)
+    ap.add_argument("--norm-eps", type=float, default=dwh2.NORM_EPS)
+    ap.add_argument("--norm-safety", type=float, default=dwh2.NORM_SAFETY)
+    ap.add_argument("--dwh2-apply", type=str, default="fp16", choices=["fp16", "fp32"])
+    ap.add_argument("--output", type=str, default="results.jsonl")
+    args = ap.parse_args()
+
+    device = torch.device(args.device)
+    if device.type != "cuda":
+        raise RuntimeError("This benchmark is tuned for CUDA GPUs.")
+    if device.index is not None:
+        torch.cuda.set_device(device.index)
+
+    set_fast_matmul(not args.no_tf32)
+
+    seeds = [int(x) for x in args.seeds.split(",") if x.strip()]
+    cases = [x.strip() for x in args.cases.split(",") if x.strip()]
+    shapes = []
+    for s in [x.strip() for x in args.shapes.split(",") if x.strip()]:
+        m, n = s.lower().split("x")
+        shapes.append((int(m), int(n), s))
+    reset_iters = [int(x) for x in args.gns_reset_iters.split(",") if x.strip()]
+
+    gns_mod = import_gns()
+    gns_core = make_gns_core_runner(gns_mod, use_kernels=bool(args.gns_use_kernels), reset_iters=reset_iters)
+
+    out_f = open(args.output, "w", encoding="utf-8", buffering=1)
+    try:
+        with torch.inference_mode():
+            for (m, n, shape_str) in shapes:
+                for case_name in cases:
+                    for seed in seeds:
+                        a0 = make_case(case_name, m, n, device=device, seed=seed).contiguous()
+                        a = cast_dtype(a0, args.dtype).contiguous()
+
+                        ws = dwh2.DWH2Workspace.allocate(min(a.shape), a.device, a.dtype, block_rows=dwh2.GRAM_BLOCK_ROWS)
+
+                        # Shared normalization once (excluded from timing)
+                        a_norm, gram_norm = dwh2.normalize_moment_with_small_gram(
+                            a,
+                            eps=float(args.norm_eps),
+                            safety=float(args.norm_safety),
+                            workspace=ws,
+                        )
+
+                        def run_dwh2():
+                            return dwh2.dwh2_core(
+                                a_norm, gram_norm, ell0=float(args.ell0), workspace=ws, apply=args.dwh2_apply
+                            )
+
+                        def run_gns():
+                            y = gns_core(a_norm.half())
+                            return dwh2.PolarResult(q=y)
+
+                        f_dwh2 = run_dwh2
+                        f_gns = run_gns
+                        if args.compile:
+                            f_dwh2 = torch.compile(f_dwh2, mode="max-autotune")  # type: ignore
+                            f_gns = torch.compile(f_gns, mode="max-autotune")  # type: ignore
+
+                        for method, fn in [("dwh2", f_dwh2), ("gns", f_gns)]:
+                            out, times = measure(fn, int(args.trials), int(args.warmup))
+                            q = out.q
+                            st = out.stats
+
+                            ortho, diag_rms, diag_max, offdiag = qtq_metrics(q)
+                            obj = objective_fp32(q, a_norm)
+
+                            rec = Record(
+                                method=method,
+                                case=case_name,
+                                shape=shape_str,
+                                dtype=args.dtype,
+                                tf32=bool(not args.no_tf32),
+                                compile=bool(args.compile),
+                                trials=int(args.trials),
+                                warmup=int(args.warmup),
+                                dwh2_apply=args.dwh2_apply,
+                                median_ms=float(statistics.median(times)),
+                                min_ms=float(min(times)),
+                                ortho_fro=ortho,
+                                diag_rms=diag_rms,
+                                diag_max=diag_max,
+                                offdiag_fro=offdiag,
+                                objective_fp32=obj,
+                                chol_calls=st.calls,
+                                chol_shifted_calls=st.shifted_calls,
+                                chol_total_retries=st.total_retries,
+                                chol_max_jitter=st.max_jitter,
+                            )
+                            line = json.dumps(asdict(rec), sort_keys=True)
+                            print(line, flush=True)
+                            out_f.write(line + "\n")
+    finally:
+        out_f.close()
+
+
+if __name__ == "__main__":
+    main()

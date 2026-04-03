@@ -8,15 +8,9 @@ dependencies = [
     "numpy>=2.4.4",
     "torch>=2.11.0",
     "triton-windows>=3.6.0.post26; sys_platform == 'win32'",
+    "gram-newton-schulz",
+    "quack-kernels",
 ]
-
-[project.scripts]
-bench = "polar_decomposition.cli.bench:main"
-profile-gpu = "polar_decomposition.cli.profile_gpu:main"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
 
 [[tool.uv.index]]
 name = "pytorch-cuda"
@@ -27,6 +21,16 @@ explicit = true
 torch = [{ index = "pytorch-cuda" }]
 torchvision = [{ index = "pytorch-cuda" }]
 torchaudio = [{ index = "pytorch-cuda" }]
+gram-newton-schulz = { git = "https://github.com/Dao-AILab/gram-newton-schulz", rev = "6e11d8589e835c94cdaaa7a0e2503241b68ef29e" }
+quack-kernels = { git = "https://github.com/Dao-AILab/quack", rev = "e2ed8c4ba3bc67a89b5acd435d6f309cca66fb4e" }
+
+[tool.uv]
+override-dependencies = [
+    "nvidia-cutlass-dsl; sys_platform == 'linux'",
+    "nvidia-cutlass-dsl-libs-base; sys_platform == 'linux'",
+    "apache-tvm-ffi; sys_platform == 'linux'",
+    "torch-c-dlpack-ext; sys_platform == 'linux'",
+]
 
 [tool.ruff.lint]
 ignore = ["E741"]

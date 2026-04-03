@@ -11,6 +11,7 @@ class NormalizationInfo:
     method: str
     raw_scale: float
     scale: float
+    gram: torch.Tensor | None = None
 
 
 def _tall_view(a: torch.Tensor) -> torch.Tensor:
@@ -60,7 +61,11 @@ def _moment_lambda_upper(
     return (t1 + torch.sqrt((n - 1) * radicand)) / n
 
 
-def spectral_additive_scale(a: torch.Tensor) -> NormalizationInfo:
+def spectral_additive_scale(
+    a: torch.Tensor,
+    *,
+    gram: torch.Tensor | None = None,
+) -> NormalizationInfo:
     """One-sided spectral upper bound via additive Gram error envelope.
 
     First upper-bound the computed Gram's spectral radius with the same PSD
@@ -73,7 +78,8 @@ def spectral_additive_scale(a: torch.Tensor) -> NormalizationInfo:
     This is usually less conservative than inflating tr(G^2) directly.
     """
     x = _tall_view(a)
-    gram = x.mT @ x
+    if gram is None:
+        gram = x.mT @ x
 
     gram64 = gram.to(torch.float64)
     t1_hat = torch.trace(gram64)
@@ -90,17 +96,23 @@ def spectral_additive_scale(a: torch.Tensor) -> NormalizationInfo:
         method="spectral_additive",
         raw_scale=raw_scale,
         scale=scale,
+        gram=gram,
     )
 
 
-def estimate_normalization(a: torch.Tensor) -> NormalizationInfo:
-    return spectral_additive_scale(a)
+def estimate_normalization(
+    a: torch.Tensor,
+    *,
+    gram: torch.Tensor | None = None,
+) -> NormalizationInfo:
+    return spectral_additive_scale(a, gram=gram)
 
 
 def normalize_matrix(
     a: torch.Tensor,
     *,
     eps: float,
+    gram: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, NormalizationInfo]:
-    info = estimate_normalization(a)
+    info = estimate_normalization(a, gram=gram)
     return a / (info.scale + eps), info

@@ -80,8 +80,43 @@ We use restart interval 3. The paper suggests adding $10^{-3} I$ to the first Gr
 
 The methods do not inspect singular values.
 
-The default benchmark normalizes inputs by a one-sided 2-moment spectral bound.
+The default benchmark normalizes inputs by a one-sided additive spectral bound.
 For a tall view $X$ and the computed small-side Gram $\widehat G = X^\top X$, we use
+
+$$
+t_1(\widehat G) = \operatorname{tr}(\widehat G),\qquad
+t_2(\widehat G) = \|\widehat G\|_F^2,
+$$
+
+and first bound the computed Gram itself with the PSD 2-moment formula
+
+$$
+\widehat\lambda_{\mathrm{ub}}
+=
+\frac{
+t_1(\widehat G) + \sqrt{(n - 1)(n t_2(\widehat G) - t_1(\widehat G)^2)}
+}{n}.
+$$
+
+We then add the finite-precision Gram envelope directly at the eigenvalue level:
+
+$$
+\lambda_{\max}(G)
+\le
+\widehat\lambda_{\mathrm{ub}} + \eta \|X\|_F^2,
+$$
+
+so the default scale is
+
+$$
+\alpha_{\mathrm{ub}}
+=
+\sqrt{\widehat\lambda_{\mathrm{ub}} + \eta \|X\|_F^2}.
+$$
+
+This is less conservative in practice than inflating $t_2$ first.
+
+The older `spectral_bound` alternative inflates the second moment directly. It uses
 
 $$
 t_1 = \|X\|_F^2,\qquad
@@ -119,6 +154,7 @@ by default. This is a design parameter, not an oracle estimate.
 The only alternative CLI baseline is:
 
 - `fro`: the QDWH-style practical upper bound $\|A\|_F`
+- `spectral_bound`: the older moment-inflation bound
 
 ## SPD preconditioning
 

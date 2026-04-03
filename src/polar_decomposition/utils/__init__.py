@@ -5,6 +5,7 @@ from .normalization import (
     estimate_normalization,
     fro_scale,
     normalize_matrix,
+    spectral_additive_scale,
     spectral_bound_scale,
 )
 from .precond import CholStats, PolarResult, spd_inverse_fast, spd_inverse_safe
@@ -16,6 +17,7 @@ __all__ = [
     "estimate_normalization",
     "fro_scale",
     "normalize_matrix",
+    "spectral_additive_scale",
     "spectral_bound_scale",
     "spd_inverse_fast",
     "spd_inverse_safe",

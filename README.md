@@ -10,15 +10,15 @@ The repo is intentionally focused on matrix-only inputs and realistic low-precis
 ## Current headline
 
 Fresh current-`HEAD` benchmark on this machine with shared $\ell_0 = 10^{-3}$,
-the default `spectral_bound` normalizer, and the default DWH2
+the default `spectral_additive` normalizer, and the default DWH2
 `rectangular` mode:
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **399.01 ms** | **0.03147** | **0.07454** |
-| `pe5` | 686.00 ms | 0.08877 | 0.18633 |
+| `dwh2` | **395.97 ms** | **0.03062** | **0.07421** |
+| `pe5` | 673.85 ms | 0.08874 | 0.18627 |
 
-`dwh2` is 1.72x faster by median runtime and lower on `q_fro_error` in 11/11
+`dwh2` is 1.70x faster by median runtime and lower on `q_fro_error` in 11/11
 default cases.
 
 ## Quick start
@@ -39,6 +39,12 @@ Frobenius baseline:
 
 ```bash
 uv run bench --device cuda --tf32 --normalizer fro
+```
+
+Previous moment-inflation bound:
+
+```bash
+uv run bench --device cuda --tf32 --normalizer spectral_bound
 ```
 
 Write JSONL output:

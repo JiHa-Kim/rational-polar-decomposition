@@ -387,7 +387,7 @@ def main() -> None:
     parser.add_argument(
         "--normalizer",
         type=str,
-        default="spectral_bound",
+        default="spectral_additive",
         choices=["fro", "spectral_bound", "spectral_additive"],
         help="Input scaling used before running the polar iterations.",
     )

@@ -302,9 +302,19 @@ def _dwh2_smallside_bounded(
     )
     _smallside_inverse_tri_from_factor(l1, s1, out=h)
     _symmetrize_(h, scratch)
-    h.mul_(beta1)
-    h.diagonal().add_(alpha1)
-    torch.mm(m_acc, h, out=k)
+    # Final update: K = alpha1 M0 + beta1 (M0 H1). Pulling the identity term
+    # out of the GEMM keeps the dominant affine mass out of TF32. We also
+    # balance the K-dimension diagonally so the raw M0 @ H1 product is formed
+    # between better-scaled factors without changing the exact result.
+    diag_m = torch.clamp(m_acc.diagonal(), min=1e-30)
+    diag_h = torch.clamp(h.diagonal(), min=1e-30)
+    d = torch.sqrt(diag_h / diag_m)
+    buf.copy_(m_acc)
+    buf.mul_(d[None, :])
+    h.mul_(d.reciprocal()[:, None])
+    torch.mm(buf, h, out=k)
+    k.mul_(beta1)
+    k.add_(m_acc, alpha=alpha1)
 
     x = x @ k
     if transposed:

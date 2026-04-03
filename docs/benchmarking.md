@@ -50,7 +50,7 @@ This keeps `q_fro_error` comparable across different normalizers.
 Fresh current-`HEAD` benchmark on this machine with the shared $\ell_0 = 10^{-3}$
 setting for both methods:
 
-- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_smallside_bounded_invdelta_20260402.jsonl`
+- benchmark command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --output runs/final_smallside_bounded_affinebal_20260402.jsonl`
 - shape: 16384 x 4096
 - cases: 11 default cases
 - measurement: warmup=1, trials=3
@@ -60,43 +60,43 @@ setting for both methods:
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **375.47 ms** | **0.02964** | **0.06796** |
-| `pe5` | 689.21 ms | 0.08874 | 0.18627 |
+| `dwh2` | **367.07 ms** | **0.02963** | **0.06771** |
+| `pe5` | 680.00 ms | 0.08874 | 0.18627 |
 
-`dwh2` is 1.84x faster by median runtime and lower on `q_fro_error` in 10/11
+`dwh2` is 1.85x faster by median runtime and lower on `q_fro_error` in 10/11
 cases. The only PE5 win on `q_fro_error` is `rank_1_heavy`.
 
 ## Detailed per-case results
 
 | Case | DWH2 ms | PE5 ms | Speedup | DWH2 `q_fro_error` | PE5 `q_fro_error` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `adversarial_condition` | **376.18** | 692.88 | 1.84x | **0.49692** | 0.51884 |
-| `ar1_cols` | **364.50** | 686.82 | 1.88x | **0.02859** | 0.08874 |
-| `duplicate_cols` | **395.25** | 688.21 | 1.74x | **0.32829** | 0.36716 |
-| `gaussian` | **359.02** | 663.37 | 1.85x | **0.02953** | 0.08845 |
-| `heavy_tail_t` | **365.66** | 703.56 | 1.92x | **0.02964** | 0.08861 |
-| `ill_conditioned` | **385.10** | 684.83 | 1.78x | **0.77071** | 0.83908 |
-| `lognormal_cols` | **361.07** | 667.32 | 1.85x | **0.13202** | 0.19996 |
-| `lowrank_noise` | **382.22** | 695.75 | 1.82x | **0.10433** | 0.11144 |
-| `orthogonal_noisy` | **375.47** | 693.09 | 1.85x | **0.00041** | 0.08398 |
-| `rank_1_heavy` | **373.93** | 691.31 | 1.85x | 0.01496 | **0.01437** |
-| `sparse_like` | **375.82** | 689.21 | 1.83x | **0.02949** | 0.08843 |
+| `adversarial_condition` | **393.68** | 717.42 | 1.82x | **0.49691** | 0.51884 |
+| `ar1_cols` | **363.40** | 663.00 | 1.82x | **0.02854** | 0.08874 |
+| `duplicate_cols` | **365.80** | 684.30 | 1.87x | **0.33007** | 0.36716 |
+| `gaussian` | **362.77** | 670.21 | 1.85x | **0.02953** | 0.08845 |
+| `heavy_tail_t` | **367.68** | 686.24 | 1.87x | **0.02963** | 0.08861 |
+| `ill_conditioned` | **367.07** | 680.00 | 1.85x | **0.77064** | 0.83908 |
+| `lognormal_cols` | **367.63** | 667.86 | 1.82x | **0.13202** | 0.19996 |
+| `lowrank_noise` | **365.19** | 698.66 | 1.91x | **0.10392** | 0.11144 |
+| `orthogonal_noisy` | **368.53** | 674.91 | 1.83x | **0.00064** | 0.08398 |
+| `rank_1_heavy` | **369.34** | 682.85 | 1.85x | 0.01452 | **0.01437** |
+| `sparse_like` | **366.03** | 674.90 | 1.84x | **0.02949** | 0.08843 |
 
 ## Rectangular reference snapshot
 
 Fresh DWH2-only reference runs on the same benchmark path:
 
-- rectangular command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --methods dwh2 --dwh2-mode rectangular --output runs/dwh2_rectangular_head_20260402.jsonl`
-- bounded command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --methods dwh2 --dwh2-mode smallside_bounded --output runs/dwh2_smallside_bounded_invdelta_20260402.jsonl`
+- rectangular command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --methods dwh2 --dwh2-mode rectangular --output runs/dwh2_rectangular_additive_20260402.jsonl`
+- bounded command: `uv run bench --device cuda --tf32 --reference fp32 --quiet --methods dwh2 --dwh2-mode smallside_bounded --output runs/dwh2_smallside_bounded_affinebal_20260402.jsonl`
 
 | Mode | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
 | `rectangular` | 390.26 ms | 0.03062 | 0.07421 |
-| `smallside_bounded` | **362.62 ms** | **0.02964** | **0.06796** |
+| `smallside_bounded` | **367.86 ms** | **0.02963** | **0.06771** |
 
 In isolated DWH2-only reference runs, `smallside_bounded` is faster on `11/11`
-cases and lower on `q_fro_error` on `9/11` cases. The median speedup over
-`rectangular` is about `1.08x`, so `smallside_bounded` is now the default DWH2
+cases and lower on `q_fro_error` on `10/11` cases. The median speedup over
+`rectangular` is about `1.06x`, so `smallside_bounded` is now the default DWH2
 kernel.
 
 ## Representative historical profiles

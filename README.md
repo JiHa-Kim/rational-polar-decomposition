@@ -15,10 +15,10 @@ the default `spectral_additive` normalizer, and the default DWH2
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **375.47 ms** | **0.02964** | **0.06796** |
-| `pe5` | 689.21 ms | 0.08874 | 0.18627 |
+| `dwh2` | **367.07 ms** | **0.02963** | **0.06771** |
+| `pe5` | 680.00 ms | 0.08874 | 0.18627 |
 
-`dwh2` is 1.84x faster by median runtime and lower on `q_fro_error` in 10/11
+`dwh2` is 1.85x faster by median runtime and lower on `q_fro_error` in 10/11
 default cases.
 
 ## Quick start

@@ -86,9 +86,25 @@ then inverts $A_1$ directly on the small side and finishes with one large
 right-multiply.
 
 This removes the old dense-RHS second solve `K^{-1} H_0` from the critical
-path. The remaining bounded `H_0 @ (I - H_0)` site is unit-diagonal scaled
-before the TF32 GEMM so the tensor-core multiply sees a correlation-like matrix
-instead of the raw SPD block.
+path. The bounded `H_0 @ (I - H_0)` site is unit-diagonal scaled before the
+TF32 GEMM so the tensor-core multiply sees a correlation-like matrix instead of
+the raw SPD block.
+
+The final product is also evaluated in a more stable exact form. Writing
+
+$$
+H_1 = A_1^{-1},
+$$
+
+the implementation uses
+
+$$
+K = \alpha_1 M_0 + \beta_1 (M_0 H_1)
+$$
+
+instead of forming $M_0 (\alpha_1 I + \beta_1 H_1)$ directly. The identity term
+stays out of the TF32 GEMM, and the inner $M_0 H_1$ product is diagonally
+balanced with an exact right-scale / left-unscale pair before the matmul.
 
 The rectangular kernel remains available as a reference mode:
 

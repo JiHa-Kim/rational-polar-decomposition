@@ -12,16 +12,16 @@ DWH2 mode.
 On the `16384 x 4096`, `seed=0`, `spectral_additive` benchmark path:
 
 - rectangular reference: [runs/dwh2_rectangular_additive_20260402.jsonl](../runs/dwh2_rectangular_additive_20260402.jsonl)
-- current bounded run: [runs/dwh2_smallside_bounded_invdelta_20260402.jsonl](../runs/dwh2_smallside_bounded_invdelta_20260402.jsonl)
+- current bounded run: [runs/dwh2_smallside_bounded_affinebal_20260402.jsonl](../runs/dwh2_smallside_bounded_affinebal_20260402.jsonl)
 
 Integrated DWH2-only result:
 
 - `rectangular` median runtime: `390.26 ms`
-- `smallside_bounded` median runtime: `362.62 ms`
-- `smallside_bounded` median `q_fro_error`: `0.02964` vs rectangular `0.03062`
+- `smallside_bounded` median runtime: `367.86 ms`
+- `smallside_bounded` median `q_fro_error`: `0.02963` vs rectangular `0.03062`
 - faster on `11/11`
-- better `q_fro_error` on `9/11`
-- remaining worse rows: `lowrank_noise`, `rank_1_heavy`
+- better `q_fro_error` on `10/11`
+- remaining worse row: `rank_1_heavy`
 
 ## Current Kernel
 
@@ -38,6 +38,9 @@ The bounded kernel uses:
   $H_1 = A_1^{-1}$
   on the small side
 - one final large right-multiply
+- final affine-split product
+  $K = \alpha_1 M_0 + \beta_1 (M_0 H_1)$
+  with diagonal balancing on the inner bounded GEMM
 
 The important structural change is that the kernel no longer forms the old
 dense-RHS second solve
@@ -79,7 +82,10 @@ I + \frac{c_1}{c_0}
 \Bigr).
 $$
 
-The bounded $H_0 @ (I - H_0)$ site is unit-diagonal scaled before the TF32 GEMM.
+The bounded $H_0 @ (I - H_0)$ site is unit-diagonal scaled before the TF32
+GEMM. The final $M_0 H_1$ product is also evaluated through an exact affine
+split that keeps the identity contribution out of TF32 and balances the inner
+GEMM diagonally.
 
 ## What Actually Mattered
 
@@ -115,6 +121,8 @@ chains on the same algebra.
 - direct second-stage inverse input built from $\Delta_0$ and $H_0$
 - triangular inverse backend for the second small-side inverse
 - unit-diagonal scaling of the bounded $H_0 @ (I - H_0)$ matmul
+- affine-split final product $K = \alpha_1 M_0 + \beta_1 (M_0 H_1)$
+- diagonal balancing of the final bounded $M_0 H_1$ matmul
 - explicit symmetrization of the small-side SPD states
 
 ## What Did Not Work
@@ -128,11 +136,10 @@ chains on the same algebra.
 
 ## Remaining Gap
 
-The remaining losses are narrow:
+The remaining loss is narrow:
 
-- `lowrank_noise`: slightly worse than rectangular on `q_fro_error`
-- `rank_1_heavy`: still trails rectangular, though much less than before
+- `rank_1_heavy`: still trails rectangular on `q_fro_error`, though much less than before
 
-Those rows are now small residual gaps inside an otherwise better kernel. The
+That row is now a small residual gap inside an otherwise better kernel. The
 main future target is no longer “make small-side DWH work at all”; it is
 “tighten the last low-rank rows without giving back the current speed win.”

@@ -89,7 +89,7 @@ def main() -> None:
     parser.add_argument("--symmetrize-pe5", action="store_true")
     parser.add_argument(
         "--normalizer",
-        choices=["fro", "spectral_bound"],
+        choices=["fro", "spectral_bound", "spectral_additive"],
         default="spectral_bound",
     )
     args = parser.parse_args()

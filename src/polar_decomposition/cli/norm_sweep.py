@@ -99,8 +99,8 @@ def main() -> None:
     parser.add_argument(
         "--normalizers",
         nargs="+",
-        default=["fro", "spectral_bound"],
-        choices=["fro", "spectral_bound"],
+        default=["fro", "spectral_bound", "spectral_additive"],
+        choices=["fro", "spectral_bound", "spectral_additive"],
     )
     parser.add_argument(
         "--output",

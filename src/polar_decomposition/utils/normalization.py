@@ -55,6 +55,15 @@ def _gram_error_envelope(x: torch.Tensor) -> float:
     return eta
 
 
+def _moment_lambda_upper(
+    t1: torch.Tensor,
+    t2: torch.Tensor,
+    n: int,
+) -> torch.Tensor:
+    radicand = torch.clamp_min((n * t2) - (t1 * t1), 0.0)
+    return (t1 + torch.sqrt((n - 1) * radicand)) / n
+
+
 def spectral_bound_scale(a: torch.Tensor) -> NormalizationInfo:
     """One-sided spectral-norm upper bound from Gram moments.
 
@@ -73,17 +82,48 @@ def spectral_bound_scale(a: torch.Tensor) -> NormalizationInfo:
     t2 = gram_fro * gram_fro
 
     n = x.shape[1]
-    radicand = torch.clamp_min((n * t2) - (t1 * t1), 0.0)
-    raw_lambda = (t1 + torch.sqrt((n - 1) * radicand)) / n
+    raw_lambda = _moment_lambda_upper(t1, t2, n)
     raw_scale = float(torch.sqrt(raw_lambda).item())
 
     eta = _gram_error_envelope(x)
     t2_ub = torch.square(gram_fro + (eta * t1))
-    ub_radicand = torch.clamp_min((n * t2_ub) - (t1 * t1), 0.0)
-    ub_lambda = (t1 + torch.sqrt((n - 1) * ub_radicand)) / n
+    ub_lambda = _moment_lambda_upper(t1, t2_ub, n)
     scale = float(torch.sqrt(ub_lambda).item())
 
     return NormalizationInfo(method="spectral_bound", raw_scale=raw_scale, scale=scale)
+
+
+def spectral_additive_scale(a: torch.Tensor) -> NormalizationInfo:
+    """One-sided spectral upper bound via additive Gram error envelope.
+
+    First upper-bound the computed Gram's spectral radius with the same PSD
+    two-moment bound, then add the TF32/FP32 Gram error envelope directly at the
+    eigenvalue level:
+
+        lambda_max(G) <= lambda_max(G_hat) + ||G_hat - G||_2
+                       <= lambda_hat_ub + eta ||X||_F^2.
+
+    This is usually less conservative than inflating tr(G^2) directly.
+    """
+    x = _tall_view(a)
+    gram = x.mT @ x
+
+    gram64 = gram.to(torch.float64)
+    t1_hat = torch.trace(gram64)
+    gram_fro = torch.linalg.matrix_norm(gram64, ord="fro")
+    t2_hat = gram_fro * gram_fro
+    raw_lambda = _moment_lambda_upper(t1_hat, t2_hat, x.shape[1])
+    raw_scale = float(torch.sqrt(raw_lambda).item())
+
+    t1 = torch.sum(torch.square(x), dtype=torch.float64)
+    eta = _gram_error_envelope(x)
+    ub_lambda = raw_lambda + (eta * t1)
+    scale = float(torch.sqrt(torch.clamp_min(ub_lambda, 0.0)).item())
+    return NormalizationInfo(
+        method="spectral_additive",
+        raw_scale=raw_scale,
+        scale=scale,
+    )
 
 
 def estimate_normalization(
@@ -96,6 +136,8 @@ def estimate_normalization(
         return NormalizationInfo(method="fro", raw_scale=scale, scale=scale)
     if method == "spectral_bound":
         return spectral_bound_scale(a)
+    if method == "spectral_additive":
+        return spectral_additive_scale(a)
     raise ValueError(f"unknown normalization method {method}")
 
 

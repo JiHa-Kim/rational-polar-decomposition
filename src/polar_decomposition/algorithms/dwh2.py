@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import torch
 
-from .pe5 import PAPER_MUON_ELL
+PAPER_MUON_ELL = 1e-3
+PAPER_NORM_EPS = 1e-3
 from ..utils.precond import (
     CholStats,
     PolarResult,

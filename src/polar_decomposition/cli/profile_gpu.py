@@ -84,7 +84,7 @@ def main() -> None:
     parser.add_argument(
         "--dwh2-mode",
         choices=list(DWH2_MODES),
-        default="rectangular",
+        default="smallside_bounded",
     )
     parser.add_argument("--symmetrize-pe5", action="store_true")
     parser.add_argument(

@@ -139,18 +139,17 @@ def _smallside_inverse_from_factor(
     return out
 
 
-def _smallside_solve_from_factor(
-    rhs: torch.Tensor,
+def _smallside_inverse_tri_from_factor(
     l: torch.Tensor,
     s: torch.Tensor,
     *,
     out: torch.Tensor,
 ) -> torch.Tensor:
-    out.copy_(rhs)
-    out.mul_(s[:, None])
+    out.zero_()
+    out.diagonal().fill_(1.0)
     torch.linalg.solve_triangular(l, out, upper=False, left=True, out=out)
     torch.linalg.solve_triangular(l.mT, out, upper=True, left=True, out=out)
-    out.mul_(s[:, None])
+    out.mul_(s[:, None]).mul_(s[None, :])
     return out
 
 
@@ -271,42 +270,41 @@ def _dwh2_smallside_bounded(
     _smallside_inverse_from_factor(l0, s0, out=h)
     _symmetrize_(h, scratch)
 
+    k.copy_(h).mul_(-1.0)
+    k.diagonal().add_(1.0)
+    # Build A1 = I + (c1 / c0) M0 Delta0 M0 from Delta0 = c0 G0. Using
+    # Delta0 H0 = I - H0 avoids the dense-RHS second solve K^{-1} H0 entirely.
+    # Only the bounded H0 @ T0 product goes through TF32.
+    buf.copy_(gram)
+    buf.mul_(delta_scale * cc0 * alpha0 * alpha0)
+    sh = torch.sqrt(torch.clamp(h.diagonal(), min=1e-30))
+    invsh = sh.reciprocal()
+    scratch.copy_(k)
+    scratch.mul_(sh[:, None])
+    m_acc.copy_(h)
+    m_acc.mul_(invsh[:, None]).mul_(invsh[None, :])
+    torch.mm(m_acc, scratch, out=gram)
+    gram.mul_(sh[:, None])
+    buf.add_(k, alpha=delta_scale * 2.0 * alpha0 * beta0)
+    buf.add_(gram, alpha=delta_scale * beta0 * beta0)
+    buf.diagonal().add_(1.0)
+    _symmetrize_(buf, scratch)
+
     m_acc.copy_(h).mul_(beta0)
     m_acc.diagonal().add_(alpha0)
 
-    k.copy_(h).mul_(-1.0)
-    k.diagonal().add_(1.0)
-    torch.mm(k, m_acc, out=buf)
-    # Evaluate M @ buf as alpha * buf + beta * (H @ buf) so the large identity
-    # contribution stays in exact scalar arithmetic. The H @ buf product is
-    # further unit-diagonal scaled to push the TF32 GEMM onto a correlation-like
-    # matrix instead of the raw SPD block.
-    sh = torch.sqrt(torch.clamp(h.diagonal(), min=1e-30))
-    invsh = sh.reciprocal()
-    scratch.copy_(buf)
-    scratch.mul_(sh[:, None])
-    gram.copy_(h)
-    gram.mul_(invsh[:, None]).mul_(invsh[None, :])
-    torch.mm(gram, scratch, out=k)
-    k.mul_(sh[:, None])
-    buf.mul_(alpha0)
-    k.mul_(beta0).add_(buf)
-    k.mul_(delta_scale)
-    k.add_(h)
-    _symmetrize_(k, scratch)
-
     l1, s1 = _smallside_factor(
-        k,
+        buf,
         stats,
         scratch=scratch,
         diag_floor_rel=diag_floor_rel,
         base_shift_scale=scaled_jitter_scale,
     )
-    _smallside_solve_from_factor(h, l1, s1, out=buf)
-    _symmetrize_(buf, scratch)
-    buf.mul_(beta1)
-    buf.diagonal().add_(alpha1)
-    torch.mm(m_acc, buf, out=k)
+    _smallside_inverse_tri_from_factor(l1, s1, out=h)
+    _symmetrize_(h, scratch)
+    h.mul_(beta1)
+    h.diagonal().add_(alpha1)
+    torch.mm(m_acc, h, out=k)
 
     x = x @ k
     if transposed:
@@ -318,7 +316,7 @@ def dwh2(
     a: torch.Tensor,
     *,
     ell0: float = PAPER_MUON_ELL,
-    mode: str = "rectangular",
+    mode: str = "smallside_bounded",
     robust: bool = False,
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,

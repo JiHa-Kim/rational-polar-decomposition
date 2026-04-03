@@ -11,14 +11,14 @@ The repo is intentionally focused on matrix-only inputs and realistic low-precis
 
 Fresh current-`HEAD` benchmark on this machine with shared $\ell_0 = 10^{-3}$,
 the default `spectral_additive` normalizer, and the default DWH2
-`rectangular` mode:
+`smallside_bounded` mode:
 
 | Method | Median runtime | Median `q_fro_error` | Median `ortho_fro` |
 | --- | ---: | ---: | ---: |
-| `dwh2` | **395.97 ms** | **0.03062** | **0.07421** |
-| `pe5` | 673.85 ms | 0.08874 | 0.18627 |
+| `dwh2` | **375.47 ms** | **0.02964** | **0.06796** |
+| `pe5` | 689.21 ms | 0.08874 | 0.18627 |
 
-`dwh2` is 1.70x faster by median runtime and lower on `q_fro_error` in 11/11
+`dwh2` is 1.84x faster by median runtime and lower on `q_fro_error` in 10/11
 default cases.
 
 ## Quick start
@@ -29,10 +29,10 @@ Default run:
 uv run bench --device cuda --tf32
 ```
 
-Opt-in bounded small-side DWH2:
+Rectangular DWH2 reference:
 
 ```bash
-uv run bench --device cuda --tf32 --dwh2-mode smallside_bounded
+uv run bench --device cuda --tf32 --dwh2-mode rectangular
 ```
 
 Frobenius baseline:

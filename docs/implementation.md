@@ -51,9 +51,49 @@ This uses four large $O(mn^2)$ matmuls across the two DWH steps. On the target G
 
 ### Bounded small-side mode
 
-The bounded small-side mode is kept as an opt-in experimental kernel. The
-rectangular kernel remains the default because the current bounded mode only has
-a marginal isolated speed edge and does not clearly dominate it on quality.
+The default DWH2 kernel is now the bounded small-side mode.
+
+It keeps the first step in the initial small-side state,
+
+$$
+\Delta_0 = c_0 G_0,\qquad
+H_0 = (I + \Delta_0)^{-1},\qquad
+M_0 = \alpha_0 I + \beta_0 H_0,
+$$
+
+and forms the second inverse input directly as
+
+$$
+A_1 = I + \frac{c_1}{c_0} M_0 \Delta_0 M_0.
+$$
+
+Using $\Delta_0 H_0 = I - H_0$, the implementation evaluates this as
+
+$$
+A_1
+=
+I + \frac{c_1}{c_0}
+\Bigl(
+\alpha_0^2 \Delta_0
++
+2 \alpha_0 \beta_0 (I - H_0)
++
+\beta_0^2 H_0 (I - H_0)
+\Bigr),
+$$
+
+then inverts $A_1$ directly on the small side and finishes with one large
+right-multiply.
+
+This removes the old dense-RHS second solve `K^{-1} H_0` from the critical
+path. The remaining bounded `H_0 @ (I - H_0)` site is unit-diagonal scaled
+before the TF32 GEMM so the tensor-core multiply sees a correlation-like matrix
+instead of the raw SPD block.
+
+The rectangular kernel remains available as a reference mode:
+
+- `rectangular`: recompute the actual iterate Gram at both DWH steps
+- `smallside_bounded`: default bounded small-side kernel
 
 The ongoing bounded-mode diagnosis is documented in
 [dwh2-smallside-diagnosis.md](dwh2-smallside-diagnosis.md).

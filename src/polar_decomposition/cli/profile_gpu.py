@@ -10,8 +10,13 @@ from typing import Callable
 import torch
 from torch.profiler import ProfilerActivity, profile
 
+try:
+    from gram_newton_schulz import GramNewtonSchulz
+except ImportError:
+    GramNewtonSchulz = None
+
 from .bench import make_case, measure, set_fast_matmul
-from ..algorithms.dwh2 import dwh2
+from ..algorithms.dwh2 import dwh2, dwh2_hybrid
 from ..utils.normalization import normalize_matrix
 from ..algorithms.pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
 
@@ -58,7 +63,7 @@ def main() -> None:
     parser.add_argument(
         "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
     )
-    parser.add_argument("--method", choices=["dwh2", "pe5"], default="pe5")
+    parser.add_argument("--method", choices=["dwh2", "dwh2_hybrid", "gns", "pe5"], default="pe5")
     parser.add_argument(
         "--case",
         type=str,
@@ -102,15 +107,33 @@ def main() -> None:
     coeffs = pe5_coefficients(ell0=PAPER_MUON_ELL, steps=5)
 
     if args.method == "dwh2":
-
         def base(x):
             return dwh2(
                 x,
                 ell0=args.ell0,
                 gram_0=dwh2_gram_0,
             )
-    else:
 
+    elif args.method == "dwh2_hybrid":
+        def base(x):
+            # Pass gram_0=None to profile the initial Gram accumulation for a fair comparison
+            return dwh2_hybrid(
+                x,
+                ell0=args.ell0,
+                gram_0=None,
+            )
+
+
+    elif args.method == "gns":
+        if GramNewtonSchulz is None:
+            raise ImportError("Official gram-newton-schulz package not found.")
+        # Ensure we use the torch backend as custom kernels aren't installed
+        gns_obj = GramNewtonSchulz(ns_use_kernels=False)
+
+        def base(x):
+            return gns_obj(x)
+
+    else:
         def base(x):
             return pe5(
                 x,
@@ -125,6 +148,10 @@ def main() -> None:
         out, times = measure(lambda: fn(a), args.iters, args.warmup)
         median_ms = float(statistics.median(times))
         min_ms = float(min(times))
+
+        # Handle both Tensor (GNS) and PolarResult (our algorithms)
+        out_shape = tuple(out.q.shape) if hasattr(out, "q") else tuple(out.shape)
+
         print(
             json.dumps(
                 {
@@ -135,7 +162,7 @@ def main() -> None:
                     "cols": args.cols,
                     "median_ms": median_ms,
                     "min_ms": min_ms,
-                    "output_shape": tuple(out.q.shape),
+                    "output_shape": out_shape,
                 },
                 sort_keys=True,
             )
@@ -201,25 +228,27 @@ def main() -> None:
                 continue
 
             # Filtering to relevant ops
-            if not (
-                is_aten
-                or "affine_diag" in name.lower()
-                or "scale_symmetrize" in name.lower()
-                or "cholesky" in name.lower()
-            ):
-                continue
-
-            if name.startswith("aten::mm"):
+            if any(name.startswith(x) for x in ["aten::mm", "aten::bmm", "aten::baddbmm"]):
                 shapes = event.input_shapes
                 if shapes and len(shapes) >= 2:
                     s1, s2 = shapes[0], shapes[1]
-                    m, k, n = s1[0], s1[1], s2[1]
+                    # Handle both 2D and 3D (batched) shapes
+                    m = s1[-2]
+                    k = s1[-1]
+                    n = s2[-1]
                     bucket = f"GEMM {m}x{k}x{n}"
                 else:
                     bucket = "GEMM (other)"
                 s = get_stat(bucket)
                 s.total_time_us += time_us
                 s.count += count
+            elif not (
+                is_aten
+                or "affine_diag" in name.lower()
+                or "scale_symmetrize" in name.lower()
+                or "cholesky" in name.lower()
+            ):
+                continue
             elif "cholesky" in name.lower():
                 s = get_stat("Cholesky (small-side)")
                 s.total_time_us += time_us

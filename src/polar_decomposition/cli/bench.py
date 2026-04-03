@@ -380,7 +380,7 @@ def main() -> None:
     parser.add_argument(
         "--dwh2-mode",
         type=str,
-        default="smallside_bounded",
+        default="rectangular",
         choices=list(DWH2_MODES),
         help="DWH2 kernel variant.",
     )

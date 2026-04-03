@@ -310,7 +310,7 @@ def dwh2(
     a: torch.Tensor,
     *,
     ell0: float = PAPER_MUON_ELL,
-    mode: str = "smallside_bounded",
+    mode: str = "rectangular",
     robust: bool = False,
     scaled_jitter_scale: float = 2.0,
     diag_floor_rel: float = 0.0,

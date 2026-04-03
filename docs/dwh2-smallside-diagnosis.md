@@ -2,6 +2,10 @@
 
 This note tracks the bounded small-side DWH2 investigation.
 
+The bounded mode remains opt-in for now. The current isolated DWH2-only
+comparison shows only a tiny median speed edge over the rectangular baseline,
+so that is not enough to justify using it as the default yet.
+
 ## Goal
 
 Make the DWH2 small-side path faster than the rectangular path without adding brittle routing or quality regressions on hard spectra.

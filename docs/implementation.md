@@ -51,9 +51,9 @@ This uses four large $O(mn^2)$ matmuls across the two DWH steps. On the target G
 
 ### Bounded small-side mode
 
-The fastest current DWH2 path is the bounded small-side mode, which is now the
-default. The rectangular kernel is still kept as the reference path because it
-remains useful for quality comparisons and debugging.
+The bounded small-side mode is kept as an opt-in experimental kernel. The
+rectangular kernel remains the default because the current bounded mode only has
+a marginal isolated speed edge and does not clearly dominate it on quality.
 
 The ongoing bounded-mode diagnosis is documented in
 [dwh2-smallside-diagnosis.md](dwh2-smallside-diagnosis.md).

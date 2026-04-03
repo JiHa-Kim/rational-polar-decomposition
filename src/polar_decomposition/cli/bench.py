@@ -11,8 +11,24 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import torch
+import sys
+import os
 
-from ..algorithms.dwh2 import dwh2
+# Add third_party to path for official GNS
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+# src/polar_decomposition/cli/bench.py -> src/polar_decomposition/cli -> src/polar_decomposition -> src -> root
+root_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_this_dir))))
+third_party_path = os.path.join(root_path, "third_party", "gram-newton-schulz")
+
+if os.path.exists(third_party_path):
+    sys.path.append(third_party_path)
+
+try:
+    from gram_newton_schulz import GramNewtonSchulz, POLAR_EXPRESS_COEFFICIENTS as OFFICIAL_COEFS
+except ImportError:
+    OFFICIAL_COEFS = None
+
+from ..algorithms.dwh2 import dwh2, dwh2_hybrid
 from ..utils.normalization import NormalizationInfo, normalize_matrix
 from ..algorithms.pe5 import PAPER_MUON_ELL, PAPER_NORM_EPS, pe5, pe5_coefficients
 from ..utils.precond import CholStats, PolarResult
@@ -369,6 +385,13 @@ def main() -> None:
         action="store_true",
         help="Compile the algorithmic kernels with torch.compile",
     )
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="fp32",
+        choices=["fp32", "fp16"],
+        help="Precision for the algorithms themselves (independent of reference).",
+    )
     parser.add_argument("--ell0", type=float, default=PAPER_MUON_ELL)
     parser.add_argument(
         "--reference",
@@ -412,7 +435,7 @@ def main() -> None:
             "adversarial_condition",
         ],
     )
-    parser.add_argument("--methods", nargs="+", default=["dwh2", "pe5"])
+    parser.add_argument("--methods", nargs="+", default=["dwh2", "pe5", "gns"])
     parser.add_argument(
         "--output",
         type=str,
@@ -430,11 +453,36 @@ def main() -> None:
             coeffs = pe5_coefficients(ell0=args.ell0, steps=5)
 
             dwh2_fn = dwh2
+            dwh2_hybrid_fn = dwh2_hybrid
             pe5_fn = pe5
+
+            # Official GNS instance
+            if OFFICIAL_COEFS is not None:
+                gns_instance = GramNewtonSchulz(
+                    ns_coefficients=OFFICIAL_COEFS,
+                    ns_use_kernels=False,  # Custom kernels are Linux-only (manylinux)
+                    gram_newton_schulz_reset_iterations=[2],
+                )
+
+                def gns_fn(x):
+                    return PolarResult(q=gns_instance(x), stats=CholStats())
+
+            else:
+                gns_fn = None
+
             if args.compile:
                 # Compile main kernels, using fullgraph=False as Cholesky error checks cause harmless Python syncs
                 dwh2_fn = torch.compile(dwh2, mode="max-autotune")  # type: ignore
+                dwh2_hybrid_fn = torch.compile(dwh2_hybrid, mode="max-autotune")  # type: ignore
                 pe5_fn = torch.compile(pe5, mode="max-autotune")  # type: ignore
+                if gns_fn is not None:
+                    # GNS officially uses fullgraph=True, mode="reduce-overhead"
+                    compiled_gns_instance = torch.compile(
+                        gns_instance, fullgraph=True, mode="reduce-overhead"
+                    )
+
+                    def gns_fn(x):
+                        return PolarResult(q=compiled_gns_instance(x), stats=CholStats())
 
             for i, case_name in enumerate(args.cases):
                 is_stress = case_name in {"duplicate_cols", "lowrank_noise"}
@@ -467,14 +515,33 @@ def main() -> None:
                     if args.audit and ref.inv_sqrt.is_cuda:
                         torch.cuda.empty_cache()
 
+                def _wrap_cast(fn, a, precision):
+                    if precision == "fp16":
+                        return fn(a.half())
+                    return fn(a)
+
                 methods: dict[str, Callable[[], object]] = {
-                    "dwh2": lambda a=case.a, ell=args.ell0, g0=dwh2_gram_0: dwh2_fn(a, ell0=ell, gram_0=g0),
-                    "pe5": lambda a=case.a, cs=coeffs, ell=args.ell0: pe5_fn(
-                        a, ell0=ell, coeffs=cs
+                    "dwh2": lambda a=case.a, ell=args.ell0, g0=dwh2_gram_0, prec=args.precision: _wrap_cast(
+                        lambda x: dwh2_fn(x, ell0=ell, gram_0=g0), a, prec
                     ),
+                    "dwh2_hybrid": lambda a=case.a, ell=args.ell0, g0=dwh2_gram_0: dwh2_hybrid_fn(
+                        a, ell0=ell, gram_0=g0
+                    ),
+                    "pe5": lambda a=case.a, cs=coeffs, ell=args.ell0, prec=args.precision: _wrap_cast(
+                        lambda x: pe5_fn(x, ell0=ell, coeffs=cs), a, prec
+                    ),
+                    "gns": lambda a=case.a: gns_fn(a), # Official GNS handles its own casting
                 }
+                
+                if gns_fn is None:
+                    methods.pop("gns", None)
 
                 for method_name in args.methods:
+                    if method_name not in methods:
+                        if not args.quiet:
+                            print(f"Skipping method {method_name} (implementation not found)")
+                        continue
+                        
                     out, times = measure(methods[method_name], args.trials, args.warmup)
                     assert isinstance(out, PolarResult)
 

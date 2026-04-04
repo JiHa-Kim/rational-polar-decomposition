@@ -640,6 +640,7 @@ def main_hard():
 
     # Prepend defaults so that user-provided arguments can override them
     defaults = [
+        "--no-gns",
         "--hard",
         "--trials",
         "10",
@@ -657,6 +658,7 @@ def main_hard():
 def main_baseline():
     import sys
     defaults = [
+        "--no-gns",
         "--hard",
         "--trials",
         "10",

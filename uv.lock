@@ -135,8 +135,8 @@ wheels = [
 
 [[package]]
 name = "gram-newton-schulz"
-version = "0.0.1"
-source = { git = "https://github.com/Dao-AILab/gram-newton-schulz?rev=6e11d8589e835c94cdaaa7a0e2503241b68ef29e#6e11d8589e835c94cdaaa7a0e2503241b68ef29e" }
+version = "0.1.0"
+source = { git = "https://github.com/Dao-AILab/gram-newton-schulz?tag=v0.1.0#a5e9b39a63c41284ea1481e8dc11b3d083fa0641" }
 dependencies = [
     { name = "nvidia-cutlass-dsl", marker = "sys_platform == 'linux'" },
     { name = "quack-kernels" },
@@ -421,9 +421,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "gram-newton-schulz", git = "https://github.com/Dao-AILab/gram-newton-schulz?rev=6e11d8589e835c94cdaaa7a0e2503241b68ef29e" },
+    { name = "gram-newton-schulz", git = "https://github.com/Dao-AILab/gram-newton-schulz?tag=v0.1.0" },
     { name = "numpy", specifier = ">=2.4.4" },
-    { name = "quack-kernels", git = "https://github.com/Dao-AILab/quack?rev=e2ed8c4ba3bc67a89b5acd435d6f309cca66fb4e" },
+    { name = "quack-kernels", git = "https://github.com/Dao-AILab/quack?tag=v0.3.8" },
     { name = "torch", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "triton-windows", marker = "sys_platform == 'win32'", specifier = ">=3.6.0.post26" },
@@ -431,8 +431,8 @@ requires-dist = [
 
 [[package]]
 name = "quack-kernels"
-version = "0.3.7"
-source = { git = "https://github.com/Dao-AILab/quack?rev=e2ed8c4ba3bc67a89b5acd435d6f309cca66fb4e#e2ed8c4ba3bc67a89b5acd435d6f309cca66fb4e" }
+version = "0.3.8"
+source = { git = "https://github.com/Dao-AILab/quack?tag=v0.3.8#50643634c635df1c5d50c82f7c5c5a24aa5e664c" }
 dependencies = [
     { name = "apache-tvm-ffi", marker = "sys_platform == 'linux'" },
     { name = "nvidia-cutlass-dsl", marker = "sys_platform == 'linux'" },

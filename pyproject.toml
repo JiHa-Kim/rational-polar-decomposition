@@ -22,8 +22,8 @@ explicit = true
 torch = [{ index = "pytorch-cuda" }]
 torchvision = [{ index = "pytorch-cuda" }]
 torchaudio = [{ index = "pytorch-cuda" }]
-gram-newton-schulz = { git = "https://github.com/Dao-AILab/gram-newton-schulz", rev = "6e11d8589e835c94cdaaa7a0e2503241b68ef29e" }
-quack-kernels = { git = "https://github.com/Dao-AILab/quack", rev = "e2ed8c4ba3bc67a89b5acd435d6f309cca66fb4e" }
+gram-newton-schulz = { git = "https://github.com/Dao-AILab/gram-newton-schulz", tag = "v0.1.0" }
+quack-kernels = { git = "https://github.com/Dao-AILab/quack", tag = "v0.3.8" }
 
 [tool.uv]
 override-dependencies = [

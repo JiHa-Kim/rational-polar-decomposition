@@ -417,26 +417,7 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
     )
 
     def core(x: torch.Tensor) -> torch.Tensor:
-        if x.dtype != torch.float16:
-            x = x.half()
-        t = x.size(-2) > x.size(-1)
-        if t:
-            x = x.mT.contiguous()
-        xb = x.unsqueeze(0)
-        ar = getattr(gns, "aspect_ratio_to_use_gram_newton_schulz", 1)
-        use_gram = max(xb.shape[-2:]) > ar * min(xb.shape[-2:])
-        if hasattr(gns, "_gram_newton_schulz") and hasattr(
-            gns, "_standard_newton_schulz"
-        ):
-            yb = (
-                gns._gram_newton_schulz(xb)
-                if use_gram
-                else gns._standard_newton_schulz(xb)
-            )
-            y = yb.squeeze(0)
-        else:
-            y = gns(x)
-        return y.mT.contiguous() if t else y
+        return gns(x)
 
     return core
 

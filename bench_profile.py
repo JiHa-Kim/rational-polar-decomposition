@@ -272,6 +272,111 @@ class BenchmarkRunner:
         return ws
 
 
+class RegressionSuite:
+    @staticmethod
+    def _color_diff(val: float, is_speed: bool = True) -> str:
+        # Green for speedup (negative diff) or quality improvement (negative diff)
+        # Red for regression (positive diff)
+        if abs(val) < 1e-6:
+            return f"{val * 100:>+7.1f}%"
+        color = "\033[92m" if val < 0 else "\033[91m"
+        reset = "\033[0m"
+        return f"{color}{val * 100:>+7.1f}%{reset}"
+
+    @staticmethod
+    def check(baseline_path, current_path, time_thresh=0.05, metric_thresh=0.01):
+        from collections import defaultdict
+
+        def load(p):
+            res = defaultdict(list)
+            if not os.path.exists(p):
+                return res
+            with open(p, "r", encoding="utf-8") as f:
+                for ln in f:
+                    if ln.strip():
+                        r = json.loads(ln)
+                        k = (
+                            r["method"],
+                            r["case"],
+                            r["shape"],
+                            r["dtype"],
+                        )
+                        res[k].append(r)
+            return res
+
+        base, curr = load(baseline_path), load(current_path)
+        all_keys = sorted(set(base.keys()) | set(curr.keys()))
+
+        print(
+            f"\n{'Method':<6} {'Case':<16} {'Shape':<12} {'Speed Delta':<14} {'Ortho Drift':<14} {'P-Err Drift':<14}"
+        )
+        print("-" * 88)
+
+        for k in all_keys:
+            if k not in base or k not in curr:
+                continue
+
+            # Speed comparison (median_ms)
+            b_med = statistics.median([r["median_ms"] for r in base[k]])
+            c_med = statistics.median([r["median_ms"] for r in curr[k]])
+            speed_diff = (c_med - b_med) / b_med if b_med > 0 else 0.0
+
+            # Quality comparison (ortho_fro)
+            b_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in base[k]])
+            c_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in curr[k]])
+            ortho_diff = (
+                (c_ortho - b_ortho) / b_ortho
+                if b_ortho > 1e-18
+                else (c_ortho - b_ortho)
+            )
+
+            # Quality comparison (p2_gram_rel_fro)
+            b_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in base[k]])
+            c_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in curr[k]])
+            perr_diff = (
+                (c_perr - b_perr) / b_perr if b_perr > 1e-18 else (c_perr - b_perr)
+            )
+
+            s_delta = RegressionSuite._color_diff(speed_diff)
+            o_delta = RegressionSuite._color_diff(ortho_diff, False)
+            p_delta = RegressionSuite._color_diff(perr_diff, False)
+
+            print(
+                f"{k[0]:<6} {k[1]:<16} {k[2]:<12} {s_delta:<23} {o_delta:<23} {p_delta:<23}"
+            )
+
+    @staticmethod
+    def summarize(path, baseline=None):
+        if baseline and os.path.exists(baseline):
+            RegressionSuite.check(baseline, path)
+            return
+
+        from collections import defaultdict
+
+        res = defaultdict(list)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for ln in f:
+                    if ln.strip():
+                        r = json.loads(ln)
+                        k = (r["method"], r["case"], r["shape"], r["dtype"])
+                        res[k].append(r)
+        except Exception:
+            return
+
+        print(
+            f"\n{'Method':<6} {'Case':<20} {'Shape':<12} {'Med (ms)':<10} {'Ortho (F)':<12} {'P-Err (F)':<12}"
+        )
+        print("-" * 80)
+        for k in sorted(res.keys()):
+            m_ms = statistics.median([r["median_ms"] for r in res[k]])
+            o_fro = statistics.mean([r.get("ortho_fro", 0.0) for r in res[k]])
+            p_err = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in res[k]])
+            print(
+                f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m_ms:<10.4f} {o_fro:<12.2e} {p_err:<12.2e}"
+            )
+
+
 def import_gns(gns_path: str):
     root = os.path.dirname(os.path.abspath(__file__))
     paths = [
@@ -407,7 +512,8 @@ def main(argv: list[str] | None = None) -> None:
             [int(x) for x in args.gns_reset_iters.split(",") if x.strip()],
         )
 
-    dwh2_core = dwh2.dwh2_core
+    dwh2_mod = importlib.reload(dwh2)
+    dwh2_core = dwh2_mod.dwh2_core
     if args.compile:
         logger.info(f"[compile] Jitting ({args.compile_mode})...")
         dwh2_core = torch.compile(dwh2_core, mode=args.compile_mode, fullgraph=False)
@@ -550,6 +656,80 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.no_gns and args.load_gns and os.path.exists(args.load_gns):
         logger.info(f"[merge] GNS results available at {args.load_gns}")
+
+    RegressionSuite.summarize(args.output, baseline=args.baseline)
+
+
+def main_hard() -> None:
+    # Prepend defaults so that user-provided arguments can override them
+    defaults = [
+        "--no-gns",
+        "--hard",
+        "--trials",
+        "10",
+        "--warmup",
+        "2",
+        "--seeds",
+        "0",
+    ]
+    if os.path.exists("baseline.jsonl"):
+        defaults.extend(["--baseline", "baseline.jsonl"])
+
+    main(defaults + sys.argv[1:])
+
+
+def main_baseline() -> None:
+    defaults = [
+        "--no-gns",
+        "--hard",
+        "--trials",
+        "10",
+        "--warmup",
+        "2",
+        "--seeds",
+        "0",
+        "--output",
+        "baseline.jsonl",
+    ]
+    main(defaults + sys.argv[1:])
+
+
+def main_promote() -> None:
+    import shutil
+
+    if os.path.exists("results.jsonl"):
+        shutil.copy("results.jsonl", "baseline.jsonl")
+        print("Promoted results.jsonl to baseline.jsonl")
+    else:
+        print("Error: results.jsonl not found")
+
+
+def main_ab() -> None:
+    import subprocess
+
+    print("[A/B] Reverting dwh2.py to baseline...")
+    try:
+        subprocess.run(["git", "apply", "--reverse", "dwh2.diff"], check=True)
+    except subprocess.CalledProcessError:
+        print("Error: Could not revert dwh2.py (is it already baseline or is dwh2.diff invalid?)")
+        return
+
+    try:
+        print("[A/B] Running baseline...")
+        main_baseline()
+
+        print("\n[A/B] Restoring dwh2.py to current...")
+        subprocess.run(["git", "apply", "dwh2.diff"], check=True)
+
+        print("[A/B] Running current and comparing...")
+        main_hard()
+    except Exception as e:
+        print(f"Error during A/B: {e}")
+        print("[A/B] Attempting to restore dwh2.py...")
+        subprocess.run(["git", "apply", "dwh2.diff"], check=False)
+    finally:
+        # Ensure we are back to current even if success
+        pass
 
 
 if __name__ == "__main__":

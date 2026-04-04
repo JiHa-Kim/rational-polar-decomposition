@@ -43,6 +43,8 @@ override-dependencies = [
 [project.scripts]
 compare-hard = "bench_profile:main_hard"
 baseline-hard = "bench_profile:main_baseline"
+promote-baseline = "bench_profile:main_promote"
+ab-hard = "bench_profile:main_ab"
 
 [tool.ruff.lint]
 ignore = ["E741"]

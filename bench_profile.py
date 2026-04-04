@@ -379,7 +379,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--no-tf32", action="store_true")
-    ap.add_argument("--compile", action="store_true")
+    ap.add_argument("--compile", action="store_true", default=True)
 
     ap.add_argument("--trials", type=int, default=15)
     ap.add_argument("--warmup", type=int, default=5)

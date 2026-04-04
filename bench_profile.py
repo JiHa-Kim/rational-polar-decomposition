@@ -355,7 +355,9 @@ def _make_bar(total: int, desc: str):
     return tqdm(total=total, desc=desc, dynamic_ncols=True, leave=True)
 
 
-def _bar_update(bar, *, shape: str, case: str, seed: int, method: str, med: float, mn: float) -> None:
+def _bar_update(
+    bar, *, shape: str, case: str, seed: int, method: str, med: float, mn: float
+) -> None:
     if bar is None:
         logger.info(f"[{method}] {shape} {case} seed={seed} med={med:.2f}ms")
         return
@@ -363,7 +365,9 @@ def _bar_update(bar, *, shape: str, case: str, seed: int, method: str, med: floa
     bar.update(1)
 
 
-def _bar_update_metrics(bar, *, shape: str, case: str, seed: int, method: str, ortho: float, p2g: float) -> None:
+def _bar_update_metrics(
+    bar, *, shape: str, case: str, seed: int, method: str, ortho: float, p2g: float
+) -> None:
     if bar is None:
         logger.info(f"[{method}] {shape} {case} seed={seed} ortho={ortho:.2e}")
         return
@@ -394,7 +398,7 @@ def main() -> None:
     ap.add_argument(
         "--shapes",
         type=str,
-        default="16384x4096,8192x4096,4096x4096,4096x8192,32768x2048,65536x1024",
+        default="16384x4096,8192x4096,4096x4096",
     )
 
     ap.add_argument("--gns-path", type=str, default="")
@@ -478,12 +482,16 @@ def main() -> None:
         try:
             _, total = torch.cuda.mem_get_info()
             reserved = torch.cuda.memory_reserved()
-            if total > 0 and float(reserved) / float(total) >= float(args.empty_cache_threshold):
+            if total > 0 and float(reserved) / float(total) >= float(
+                args.empty_cache_threshold
+            ):
                 torch.cuda.empty_cache()
         except Exception:
             return
 
-    ws_cache: OrderedDict[tuple[int, str, int | None], dwh2.DWH2Workspace] = OrderedDict()
+    ws_cache: OrderedDict[tuple[int, str, int | None], dwh2.DWH2Workspace] = (
+        OrderedDict()
+    )
 
     def get_ws(n_small: int, dtype_str: str) -> dwh2.DWH2Workspace:
         key = (
@@ -562,7 +570,9 @@ def main() -> None:
                                 workspace=ws_t,
                             )
 
-                        def run_gns_core(a_norm_t: torch.Tensor = a_norm) -> dwh2.PolarResult:
+                        def run_gns_core(
+                            a_norm_t: torch.Tensor = a_norm,
+                        ) -> dwh2.PolarResult:
                             y = gns_core(a_norm_t.half())
                             return dwh2.PolarResult(q=y)
 
@@ -640,7 +650,11 @@ def main() -> None:
                                 )
                                 write_line(out_f, rec)
                             elif timing_f is not None:
-                                st = out.stats if hasattr(out, "stats") else dwh2.CholStats()
+                                st = (
+                                    out.stats
+                                    if hasattr(out, "stats")
+                                    else dwh2.CholStats()
+                                )
                                 rec = Record(
                                     method=method,
                                     case=case_name,
@@ -674,7 +688,9 @@ def main() -> None:
             if timing_bar is not None:
                 timing_bar.close()
 
-            metrics_bar = _make_bar(len(shapes) * len(cases) * len(seeds) * 2, "metrics")
+            metrics_bar = _make_bar(
+                len(shapes) * len(cases) * len(seeds) * 2, "metrics"
+            )
             for m, n, shape_str in shapes:
                 for case_name in cases:
                     for seed in seeds:
@@ -705,11 +721,16 @@ def main() -> None:
                                 workspace=ws_t,
                             )
 
-                        def run_gns_once(a_norm_t: torch.Tensor = a_norm) -> dwh2.PolarResult:
+                        def run_gns_once(
+                            a_norm_t: torch.Tensor = a_norm,
+                        ) -> dwh2.PolarResult:
                             y = gns_core(a_norm_t.half())
                             return dwh2.PolarResult(q=y)
 
-                        for method, fn in [("dwh2", run_dwh2_once), ("gns", run_gns_once)]:
+                        for method, fn in [
+                            ("dwh2", run_dwh2_once),
+                            ("gns", run_gns_once),
+                        ]:
                             out = fn()
                             q = out.q
                             st = out.stats

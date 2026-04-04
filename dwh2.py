@@ -91,6 +91,8 @@ class DWH2Workspace:
     k_final: torch.Tensor
     linv: torch.Tensor
     work: torch.Tensor
+    sh: torch.Tensor
+    invsh: torch.Tensor
 
     # fp16/bf16 apply buffer
     k_cast: torch.Tensor
@@ -112,6 +114,9 @@ class DWH2Workspace:
         def mat32():
             return torch.empty((n, n), device=device, dtype=torch.float32)
 
+        def vec32():
+            return torch.empty((n,), device=device, dtype=torch.float32)
+
         return DWH2Workspace(
             n=n,
             device=device,
@@ -129,6 +134,8 @@ class DWH2Workspace:
             k_final=mat32(),
             linv=mat32(),
             work=mat32(),
+            sh=vec32(),
+            invsh=vec32(),
             k_cast=torch.empty((n, n), device=device, dtype=out_dtype),
             xbuf=torch.empty((block_rows, n), device=device, dtype=torch.float32),
             L=mat32(),
@@ -171,30 +178,35 @@ def _chol_spd_inplace_ex(
     n = a.shape[0]
     _symmetrize_(a, scratch)
 
+    torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
+    if int(info_out.item()) == 0:
+        stats.update(shifted=False, retries=0, jitter=0.0)
+        return L_out
+
     u = float(torch.finfo(a.dtype).eps)
     jitter = max(jitter_scale * n * u, min_jitter)
     a.diagonal().add_(jitter)
 
     torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
     if int(info_out.item()) == 0:
-        stats.update(shifted=True, retries=0, jitter=jitter)
+        stats.update(shifted=True, retries=1, jitter=jitter)
         return L_out
 
-    retries = 1
+    retries = 2
     step = jitter * 10.0
-    while int(info_out.item()) != 0 and retries < max_retries:
+    while int(info_out.item()) != 0 and retries <= max_retries:
         a.diagonal().add_(step)
         jitter += step
         torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
+        if int(info_out.item()) == 0:
+            stats.update(shifted=True, retries=retries, jitter=jitter)
+            return L_out
         retries += 1
         step *= 10.0
 
-    if int(info_out.item()) != 0:
-        a.diagonal().add_(0.1)
-        jitter += 0.1
-        torch.linalg.cholesky(a, out=L_out)
-        retries += 1
-
+    a.diagonal().add_(0.1)
+    jitter += 0.1
+    torch.linalg.cholesky(a, out=L_out)
     stats.update(shifted=True, retries=retries, jitter=jitter)
     return L_out
 
@@ -239,13 +251,12 @@ def _spd_inv_from_cholesky(
 
 
 @torch.no_grad()
-def normalize_moment_with_small_gram(
+def normalize_small_gram(
     a: torch.Tensor,
     *,
     eps: float = NORM_EPS,
     safety: float = NORM_SAFETY,
     workspace: Optional[DWH2Workspace] = None,
-    inplace: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     transposed = a.shape[0] < a.shape[1]
     x = a.mT if transposed else a
@@ -280,7 +291,8 @@ def normalize_moment_with_small_gram(
     _symmetrize_(gram, scratch)
 
     t1_hat = torch.sum(gram.diagonal(), dtype=torch.float64)
-    tmp.copy_(gram).mul_(gram)
+    tmp.copy_(gram)
+    tmp.mul_(gram)
     t2_hat = torch.sum(tmp, dtype=torch.float64)
 
     n_t = torch.tensor(float(n), device=device, dtype=torch.float64)
@@ -304,14 +316,31 @@ def normalize_moment_with_small_gram(
     inv_denom_sq = inv_denom * inv_denom
     scale = inv_denom.to(dtype=a.dtype)
 
+    gram.mul_(inv_denom_sq)
+    return scale, gram
+
+
+@torch.no_grad()
+def normalize_moment_with_small_gram(
+    a: torch.Tensor,
+    *,
+    eps: float = NORM_EPS,
+    safety: float = NORM_SAFETY,
+    workspace: Optional[DWH2Workspace] = None,
+    inplace: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    scale, gram = normalize_small_gram(
+        a,
+        eps=eps,
+        safety=safety,
+        workspace=workspace,
+    )
+
     if inplace:
         a.mul_(scale)
         a_norm = a
     else:
         a_norm = a * scale
-
-    gram.mul_(inv_denom_sq)
-    _symmetrize_(gram, scratch)
     return a_norm, gram
 
 
@@ -324,6 +353,7 @@ def dwh2_core(
     params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",  # "fp16" (fast) or "fp32" (quality)
+    norm_scale: Optional[torch.Tensor] = None,
 ) -> PolarResult:
     assert apply in ("fp16", "fp32")
     transposed = a_norm.shape[0] < a_norm.shape[1]
@@ -356,6 +386,8 @@ def dwh2_core(
     k_final = workspace.k_final
     linv = workspace.linv
     work = workspace.work
+    sh = workspace.sh
+    invsh = workspace.invsh
     k_cast = workspace.k_cast
     L = workspace.L
     info = workspace.info
@@ -378,8 +410,17 @@ def dwh2_core(
 
     buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
 
-    # The original scaled construction simplifies exactly to h0 @ k0.
-    torch.mm(h0, k0, out=cross)
+    # Stabilized GEMM pre-conditioning
+    sh.copy_(h0.diagonal())
+    torch.clamp_(sh, min=1e-30)
+    torch.sqrt_(sh)
+    invsh.copy_(sh).reciprocal_()
+
+    scratch.copy_(k0).mul_(sh[:, None])
+    tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
+
+    torch.mm(tmp, scratch, out=cross)
+    cross.mul_(sh[:, None])
 
     buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
     buf.add_(cross, alpha=delta * (s0.beta * s0.beta))
@@ -397,12 +438,17 @@ def dwh2_core(
     k_final.add_(tmp, alpha=s1.beta)
     _symmetrize_(k_final, scratch)
 
+    scale = None if norm_scale is None else norm_scale.to(device=x.device)
+
     if apply == "fp16":
         k_cast.copy_(k_final)
         y = x @ k_cast
+        if scale is not None:
+            y.mul_(scale)
     else:
-        # Quality mode: do final apply in fp32 and return fp32 Q
         y = x.float() @ k_final
+        if scale is not None:
+            y.mul_(scale.to(dtype=y.dtype))
 
     if transposed:
         y = y.mT.contiguous()
@@ -420,6 +466,8 @@ def dwh2_end_to_end(
     apply: str = "fp16",
     inplace_normalize: bool = False,
 ) -> PolarResult:
+    del inplace_normalize  # normalization is fused into the final scalar output scale.
+
     n = int(min(a.shape))
     if (
         workspace is None
@@ -431,11 +479,17 @@ def dwh2_end_to_end(
             n, a.device, a.dtype, block_rows=GRAM_BLOCK_ROWS
         )
 
-    a_norm, gram_norm = normalize_moment_with_small_gram(
+    scale, gram_norm = normalize_small_gram(
         a,
         eps=eps,
         safety=safety,
         workspace=workspace,
-        inplace=inplace_normalize,
     )
-    return dwh2_core(a_norm, gram_norm, ell0=ell0, workspace=workspace, apply=apply)
+    return dwh2_core(
+        a,
+        gram_norm,
+        ell0=ell0,
+        workspace=workspace,
+        apply=apply,
+        norm_scale=scale,
+    )

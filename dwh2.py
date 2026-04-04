@@ -110,7 +110,10 @@ class DWH2Workspace:
 
     @staticmethod
     def allocate(
-        n: int, device: torch.device, out_dtype: torch.dtype, block_rows: int = GRAM_BLOCK_ROWS
+        n: int,
+        device: torch.device,
+        out_dtype: torch.dtype,
+        block_rows: int = GRAM_BLOCK_ROWS,
     ) -> "DWH2Workspace":
         def mat32():
             return torch.empty((n, n), device=device, dtype=torch.float32)
@@ -208,7 +211,9 @@ def _chol_spd_inplace_ex(
     return L_out
 
 
-def _tri_inv_lower_inplace(L: torch.Tensor, out: torch.Tensor, work: torch.Tensor, leaf: int = 512) -> None:
+def _tri_inv_lower_inplace(
+    L: torch.Tensor, out: torch.Tensor, work: torch.Tensor, leaf: int = 512
+) -> None:
     n = L.shape[0]
     if n <= leaf:
         out.zero_()
@@ -238,7 +243,9 @@ def _tri_inv_lower_inplace(L: torch.Tensor, out: torch.Tensor, work: torch.Tenso
     out[:k, k:].zero_()
 
 
-def _spd_inv_from_cholesky(L: torch.Tensor, invA: torch.Tensor, linv: torch.Tensor, work: torch.Tensor) -> None:
+def _spd_inv_from_cholesky(
+    L: torch.Tensor, invA: torch.Tensor, linv: torch.Tensor, work: torch.Tensor
+) -> None:
     _tri_inv_lower_inplace(L, linv, work, leaf=512)
     torch.mm(linv.mT, linv, out=invA)
 
@@ -256,8 +263,15 @@ def normalize_moment_with_small_gram(
     m, n = x.shape
     device = a.device
 
-    if workspace is None or workspace.n != n or workspace.device != device or workspace.out_dtype != a.dtype:
-        workspace = DWH2Workspace.allocate(n, device, a.dtype, block_rows=GRAM_BLOCK_ROWS)
+    if (
+        workspace is None
+        or workspace.n != n
+        or workspace.device != device
+        or workspace.out_dtype != a.dtype
+    ):
+        workspace = DWH2Workspace.allocate(
+            n, device, a.dtype, block_rows=GRAM_BLOCK_ROWS
+        )
 
     gram = workspace.gram
     scratch = workspace.scratch
@@ -287,7 +301,7 @@ def normalize_moment_with_small_gram(
     u_acc = float(torch.finfo(torch.float32).eps) / 2.0
     eta = _gamma(m, u_acc)
     if _uses_tf32_matmul():
-        eta += 2.0 ** -10
+        eta += 2.0**-10
     eta_t = torch.tensor(float(eta), device=device, dtype=torch.float64)
 
     ub_lambda = torch.clamp_min(raw_lambda + eta_t * t1, 0.0)
@@ -320,8 +334,15 @@ def dwh2_core(
     x = a_norm.mT.contiguous() if transposed else a_norm.contiguous()
     n = x.shape[1]
 
-    if workspace is None or workspace.n != n or workspace.device != x.device or workspace.out_dtype != x.dtype:
-        workspace = DWH2Workspace.allocate(n, x.device, x.dtype, block_rows=GRAM_BLOCK_ROWS)
+    if (
+        workspace is None
+        or workspace.n != n
+        or workspace.device != x.device
+        or workspace.out_dtype != x.dtype
+    ):
+        workspace = DWH2Workspace.allocate(
+            n, x.device, x.dtype, block_rows=GRAM_BLOCK_ROWS
+        )
 
     stats = CholStats()
     p = get_dwh2_params(float(ell0))
@@ -416,8 +437,17 @@ def dwh2_end_to_end(
     apply: str = "fp16",
 ) -> PolarResult:
     n = int(min(a.shape))
-    if workspace is None or workspace.n != n or workspace.device != a.device or workspace.out_dtype != a.dtype:
-        workspace = DWH2Workspace.allocate(n, a.device, a.dtype, block_rows=GRAM_BLOCK_ROWS)
+    if (
+        workspace is None
+        or workspace.n != n
+        or workspace.device != a.device
+        or workspace.out_dtype != a.dtype
+    ):
+        workspace = DWH2Workspace.allocate(
+            n, a.device, a.dtype, block_rows=GRAM_BLOCK_ROWS
+        )
 
-    a_norm, gram_norm = normalize_moment_with_small_gram(a, eps=eps, safety=safety, workspace=workspace)
+    a_norm, gram_norm = normalize_moment_with_small_gram(
+        a, eps=eps, safety=safety, workspace=workspace
+    )
     return dwh2_core(a_norm, gram_norm, ell0=ell0, workspace=workspace, apply=apply)

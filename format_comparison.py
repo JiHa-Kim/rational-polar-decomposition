@@ -50,11 +50,24 @@ def format_markdown_table(dwh2_path, gns_path):
         d_perr = statistics.mean([r.get('p2_gram_rel_fro', 0.0) for r in d_recs])
         g_perr = statistics.mean([r.get('p2_gram_rel_fro', 0.0) for r in g_recs])
         
+        def highlight_better(v1, v2, precision=".2f", is_exp=False):
+            fmt = f"{{:{precision}}}" if not is_exp else f"{{:{precision}}}"
+            s1, s2 = fmt.format(v1), fmt.format(v2)
+            if v1 < v2:
+                return f"**{s1}**", s2
+            elif v2 < v1:
+                return s1, f"**{s2}**"
+            return s1, s2
+
+        d_ms_str, g_ms_str = highlight_better(d_med, g_med)
+        d_ortho_str, g_ortho_str = highlight_better(d_ortho, g_ortho, ".2e", True)
+        d_perr_str, g_perr_str = highlight_better(d_perr, g_perr, ".2e", True)
+        
         rows.append([
             case, shape, dtype,
-            f"{d_med:.2f}", f"{g_med:.2f}", f"{speedup:.2f}x",
-            f"{d_ortho:.2e}", f"{g_ortho:.2e}",
-            f"{d_perr:.2e}", f"{g_perr:.2e}"
+            d_ms_str, g_ms_str, f"{speedup:.2f}x",
+            d_ortho_str, g_ortho_str,
+            d_perr_str, g_perr_str
         ])
     
     # Generate markdown string

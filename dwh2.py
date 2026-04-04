@@ -91,8 +91,6 @@ class DWH2Workspace:
     k_final: torch.Tensor
     linv: torch.Tensor
     work: torch.Tensor
-    sh: torch.Tensor
-    invsh: torch.Tensor
 
     # fp16/bf16 apply buffer
     k_cast: torch.Tensor
@@ -101,10 +99,8 @@ class DWH2Workspace:
     xbuf: torch.Tensor
 
     # cholesky_ex outs
-    L0: torch.Tensor
-    L1: torch.Tensor
-    info0: torch.Tensor
-    info1: torch.Tensor
+    L: torch.Tensor
+    info: torch.Tensor
 
     @staticmethod
     def allocate(
@@ -115,9 +111,6 @@ class DWH2Workspace:
     ) -> "DWH2Workspace":
         def mat32():
             return torch.empty((n, n), device=device, dtype=torch.float32)
-
-        def vec32():
-            return torch.empty((n,), device=device, dtype=torch.float32)
 
         return DWH2Workspace(
             n=n,
@@ -136,14 +129,10 @@ class DWH2Workspace:
             k_final=mat32(),
             linv=mat32(),
             work=mat32(),
-            sh=vec32(),
-            invsh=vec32(),
             k_cast=torch.empty((n, n), device=device, dtype=out_dtype),
             xbuf=torch.empty((block_rows, n), device=device, dtype=torch.float32),
-            L0=mat32(),
-            L1=mat32(),
-            info0=torch.empty((), device=device, dtype=torch.int32),
-            info1=torch.empty((), device=device, dtype=torch.int32),
+            L=mat32(),
+            info=torch.empty((), device=device, dtype=torch.int32),
         )
 
 
@@ -256,6 +245,7 @@ def normalize_moment_with_small_gram(
     eps: float = NORM_EPS,
     safety: float = NORM_SAFETY,
     workspace: Optional[DWH2Workspace] = None,
+    inplace: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     transposed = a.shape[0] < a.shape[1]
     x = a.mT if transposed else a
@@ -312,8 +302,14 @@ def normalize_moment_with_small_gram(
 
     inv_denom = denom.reciprocal()
     inv_denom_sq = inv_denom * inv_denom
+    scale = inv_denom.to(dtype=a.dtype)
 
-    a_norm = a * inv_denom.to(dtype=a.dtype)
+    if inplace:
+        a.mul_(scale)
+        a_norm = a
+    else:
+        a_norm = a * scale
+
     gram.mul_(inv_denom_sq)
     _symmetrize_(gram, scratch)
     return a_norm, gram
@@ -360,22 +356,17 @@ def dwh2_core(
     k_final = workspace.k_final
     linv = workspace.linv
     work = workspace.work
-    sh = workspace.sh
-    invsh = workspace.invsh
     k_cast = workspace.k_cast
-
-    L0 = workspace.L0
-    L1 = workspace.L1
-    info0 = workspace.info0
-    info1 = workspace.info1
+    L = workspace.L
+    info = workspace.info
 
     gram.copy_(gram_norm)
 
     buf.copy_(gram).mul_(s0.c)
     buf.diagonal().add_(1.0)
-    L0 = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L0, info_out=info0)
+    L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
-    _spd_inv_from_cholesky(L0, h0, linv, work)
+    _spd_inv_from_cholesky(L, h0, linv, work)
     _symmetrize_(h0, scratch)
 
     k0.copy_(h0).mul_(-1.0)
@@ -387,27 +378,19 @@ def dwh2_core(
 
     buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
 
-    sh.copy_(h0.diagonal())
-    torch.clamp_(sh, min=1e-30)
-    torch.sqrt_(sh)
-    invsh.copy_(sh).reciprocal_()
-
-    scratch.copy_(k0).mul_(sh[:, None])
-    tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
-
-    torch.mm(tmp, scratch, out=cross)
-    cross.mul_(sh[:, None])
+    # The original scaled construction simplifies exactly to h0 @ k0.
+    torch.mm(h0, k0, out=cross)
 
     buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
     buf.add_(cross, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
     _symmetrize_(buf, scratch)
 
-    L1 = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L1, info_out=info1)
+    L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
     rhs.copy_(m0.mT)
-    torch.linalg.solve_triangular(L1, rhs, upper=False, left=True, out=rhs)
-    torch.linalg.solve_triangular(L1.mT, rhs, upper=True, left=True, out=rhs)
+    torch.linalg.solve_triangular(L, rhs, upper=False, left=True, out=rhs)
+    torch.linalg.solve_triangular(L.mT, rhs, upper=True, left=True, out=rhs)
     tmp.copy_(rhs.mT)
 
     k_final.copy_(m0).mul_(s1.alpha)
@@ -435,6 +418,7 @@ def dwh2_end_to_end(
     safety: float = NORM_SAFETY,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
+    inplace_normalize: bool = False,
 ) -> PolarResult:
     n = int(min(a.shape))
     if (
@@ -448,6 +432,10 @@ def dwh2_end_to_end(
         )
 
     a_norm, gram_norm = normalize_moment_with_small_gram(
-        a, eps=eps, safety=safety, workspace=workspace
+        a,
+        eps=eps,
+        safety=safety,
+        workspace=workspace,
+        inplace=inplace_normalize,
     )
     return dwh2_core(a_norm, gram_norm, ell0=ell0, workspace=workspace, apply=apply)

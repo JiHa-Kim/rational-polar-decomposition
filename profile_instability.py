@@ -154,9 +154,13 @@ def exact_spectrum(a: torch.Tensor) -> dict[str, float | int]:
     return {
         "lambda_min": _safe_float(evals[0]),
         "lambda_max": lam_max,
-        "stable_rank": _safe_float((evals.sum() ** 2) / evals.square().sum().clamp_min(1e-30)),
+        "stable_rank": _safe_float(
+            (evals.sum() ** 2) / evals.square().sum().clamp_min(1e-30)
+        ),
         "rank_eff_tol_1e12": int(nonzero.numel()),
-        "cond_nonzero": _safe_float(nonzero[-1] / nonzero[0].clamp_min(1e-30)) if nonzero.numel() >= 2 else (1.0 if nonzero.numel() == 1 else float("inf")),
+        "cond_nonzero": _safe_float(nonzero[-1] / nonzero[0].clamp_min(1e-30))
+        if nonzero.numel() >= 2
+        else (1.0 if nonzero.numel() == 1 else float("inf")),
     }
 
 
@@ -175,7 +179,9 @@ def chol_probe(a_in: torch.Tensor, ws: dwh2.DWH2Workspace) -> dict[str, Any]:
     if info0 == 0:
         return out
     stats = dwh2.CholStats()
-    dwh2._chol_spd_inplace_ex(a, stats, scratch=ws.scratch, L_out=ws.L, info_out=ws.info)
+    dwh2._chol_spd_inplace_ex(
+        a, stats, scratch=ws.scratch, L_out=ws.L, info_out=ws.info
+    )
     out.update(
         {
             "info_after_shift": int(ws.info.item()),
@@ -207,7 +213,9 @@ def run_core_impl(
 
 
 @torch.no_grad()
-def _build_rank_projector(gram: torch.Tensor, tol_rel: float) -> tuple[torch.Tensor, int, dict[str, float]]:
+def _build_rank_projector(
+    gram: torch.Tensor, tol_rel: float
+) -> tuple[torch.Tensor, int, dict[str, float]]:
     G = 0.5 * (gram.float() + gram.float().mT)
     evals, evecs = torch.linalg.eigh(G.double())
     lam_max = max(_safe_float(evals[-1]), 0.0)
@@ -219,7 +227,11 @@ def _build_rank_projector(gram: torch.Tensor, tol_rel: float) -> tuple[torch.Ten
         proj = V @ V.mT
     else:
         proj = torch.zeros_like(G)
-    return proj, rank, {"tau": tau, "lambda_max": lam_max, "lambda_min": _safe_float(evals[0])}
+    return (
+        proj,
+        rank,
+        {"tau": tau, "lambda_max": lam_max, "lambda_min": _safe_float(evals[0])},
+    )
 
 
 @torch.no_grad()
@@ -238,7 +250,9 @@ def stage_profile(
     s0, s1, delta = params.step0, params.step1, params.delta
 
     a_work = a.clone()
-    a_norm, gram = dwh2.normalize_moment_with_small_gram(a_work, workspace=ws, inplace=True)
+    a_norm, gram = dwh2.normalize_moment_with_small_gram(
+        a_work, workspace=ws, inplace=True
+    )
     summaries.append(summarize_tensor("a_input", a, eigs=False))
     summaries.append(summarize_tensor("a_norm", a_norm, eigs=False))
     summaries.append(summarize_tensor("gram_norm", gram, eigs=eigs))
@@ -281,8 +295,8 @@ def stage_profile(
     rhs = ws.rhs
     k_final = ws.k_final
     linv = ws.linv
-    cross = ws.cross if hasattr(ws, 'cross') else ws.rhs
-    work = ws.work if hasattr(ws, 'work') else ws.rhs
+    cross = ws.cross if hasattr(ws, "cross") else ws.rhs
+    work = ws.work if hasattr(ws, "work") else ws.rhs
     L = ws.L
     info = ws.info
     sh = ws.sh
@@ -293,7 +307,9 @@ def stage_profile(
     buf.copy_(gram32).mul_(s0.c)
     buf.diagonal().add_(1.0)
     extras["chol0_probe"] = chol_probe(buf, ws)
-    L = dwh2._chol_spd_inplace_ex(buf, dwh2.CholStats(), scratch=scratch, L_out=L, info_out=info)
+    L = dwh2._chol_spd_inplace_ex(
+        buf, dwh2.CholStats(), scratch=scratch, L_out=L, info_out=info
+    )
     summaries.append(summarize_tensor("step0_buf", buf, eigs=eigs))
     summaries.append(summarize_tensor("step0_L", L, eigs=False))
 
@@ -329,7 +345,9 @@ def stage_profile(
     buf.add_(cross, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
     extras["chol1_probe"] = chol_probe(buf, ws)
-    L = dwh2._chol_spd_inplace_ex(buf, dwh2.CholStats(), scratch=scratch, L_out=L, info_out=info)
+    L = dwh2._chol_spd_inplace_ex(
+        buf, dwh2.CholStats(), scratch=scratch, L_out=L, info_out=info
+    )
     summaries.append(summarize_tensor("step1_buf", buf, eigs=eigs))
     summaries.append(summarize_tensor("step1_L", L, eigs=False))
 
@@ -393,7 +411,9 @@ def stage_profile(
         extras[f"{label}_gram_q_finite"] = bool(torch.isfinite(gram_q).all().item())
         extras[f"{label}_p_finite"] = bool(torch.isfinite(p).all().item())
 
-        if bool(torch.isfinite(p_raw).all().item()) and bool(torch.isfinite(p).all().item()):
+        if bool(torch.isfinite(p_raw).all().item()) and bool(
+            torch.isfinite(p).all().item()
+        ):
             extras[f"{label}_p_skew_rel"] = _safe_float(
                 torch.linalg.matrix_norm(p_raw - p_raw.mT)
                 / torch.linalg.matrix_norm(p).clamp_min(1e-30)
@@ -401,7 +421,9 @@ def stage_profile(
         else:
             extras[f"{label}_p_skew_rel"] = float("nan")
 
-        if bool(torch.isfinite(p).all().item()) and bool(torch.isfinite(gram32).all().item()):
+        if bool(torch.isfinite(p).all().item()) and bool(
+            torch.isfinite(gram32).all().item()
+        ):
             extras[f"{label}_p2_gram_rel"] = _safe_float(
                 torch.linalg.matrix_norm(p @ p - gram32.float())
                 / torch.linalg.matrix_norm(gram32.float()).clamp_min(1e-30)
@@ -418,14 +440,18 @@ def stage_profile(
 
         if proj is not None and bool(torch.isfinite(gram_q).all().item()):
             extras[f"{label}_ortho_to_proj_rel"] = _safe_float(
-                torch.linalg.matrix_norm(gram_q - proj.to(device=gram_q.device, dtype=gram_q.dtype))
+                torch.linalg.matrix_norm(
+                    gram_q - proj.to(device=gram_q.device, dtype=gram_q.dtype)
+                )
                 / math.sqrt(float(n))
             )
         else:
             extras[f"{label}_ortho_to_proj_rel"] = float("nan")
 
         # Polar Alignment Error: ||A - Q(Q^T A)|| / ||A||
-        if bool(torch.isfinite(qf).all().item()) and bool(torch.isfinite(a_norm).all().item()):
+        if bool(torch.isfinite(qf).all().item()) and bool(
+            torch.isfinite(a_norm).all().item()
+        ):
             # H = Q^T A
             h_mat = qf.mT @ a_norm.float()
             # A_rec = Q H
@@ -457,7 +483,9 @@ def main() -> None:
     args = ap.parse_args()
 
     m, n = [int(x) for x in args.shape.lower().split("x")]
-    dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[args.dtype]
+    dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[
+        args.dtype
+    ]
     device = torch.device(args.device)
     if device.type == "cuda" and device.index is not None:
         torch.cuda.set_device(device.index)
@@ -466,7 +494,9 @@ def main() -> None:
     torch.set_float32_matmul_precision("high" if not args.no_tf32 else "highest")
 
     a = CaseGenerator.make_case(args.case, m, n, device, args.seed).to(dtype)
-    ws = dwh2.DWH2Workspace.allocate(min(m, n), device, dtype, block_rows=args.gram_block_rows)
+    ws = dwh2.DWH2Workspace.allocate(
+        min(m, n), device, dtype, block_rows=args.gram_block_rows
+    )
     summaries, extras = stage_profile(
         a,
         ws,

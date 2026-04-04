@@ -531,7 +531,7 @@ def main(argv: list[str] | None = None) -> None:
     def get_output_path(method_name: str) -> str:
         if args.no_gns or (args.gns_path == "" and method_name == "dwh2"):
             return args.output
-        
+
         base, ext = os.path.splitext(args.output)
         return f"{base}_{method_name}{ext}"
 
@@ -552,9 +552,9 @@ def main(argv: list[str] | None = None) -> None:
                         if not args.no_gns and gns_core is not None:
                             methods.append(("gns", gns_core, None))
 
-                        a_master = CaseGenerator.make_case(
-                            case, m, n, device, seed
-                        ).to(dtype_map[args.dtype])
+                        a_master = CaseGenerator.make_case(case, m, n, device, seed).to(
+                            dtype_map[args.dtype]
+                        )
 
                         for name, speed_core, quality_core in methods:
                             if name not in output_files:
@@ -563,10 +563,8 @@ def main(argv: list[str] | None = None) -> None:
 
                             out_f = output_files[name]
                             a = a_master.clone()
-                            a_norm, g_norm = (
-                                dwh2_mod.normalize_moment_with_small_gram(
-                                    a, workspace=ws, inplace=True
-                                )
+                            a_norm, g_norm = dwh2_mod.normalize_moment_with_small_gram(
+                                a, workspace=ws, inplace=True
                             )
 
                             def fn_full(an=a_norm, gn=g_norm):
@@ -608,9 +606,7 @@ def main(argv: list[str] | None = None) -> None:
                                         chol_max_jitter=st.max_jitter,
                                     )
                                 else:
-                                    ortho, o_max = MetricsSuite.ortho_stats(
-                                        out.q, ws
-                                    )
+                                    ortho, o_max = MetricsSuite.ortho_stats(out.q, ws)
                                     skew, p2g = MetricsSuite.polar_p_stats(
                                         a_norm, out.q, g_norm, ws
                                     )
@@ -686,9 +682,7 @@ def main(argv: list[str] | None = None) -> None:
                                     )
                                     del out_qual
 
-                            out_f.write(
-                                json.dumps(asdict(rec), sort_keys=True) + "\n"
-                            )
+                            out_f.write(json.dumps(asdict(rec), sort_keys=True) + "\n")
                             out_f.flush()
                             if bar:
                                 bar.update(1)

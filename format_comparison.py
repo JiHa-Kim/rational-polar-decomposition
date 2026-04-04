@@ -21,7 +21,17 @@ def format_markdown_table(dwh2_path, gns_path):
     dwh2_results = load_results(dwh2_path)
     gns_results = load_results(gns_path)
     
-    all_keys = sorted(set(dwh2_results.keys()) | set(gns_results.keys()))
+    def sort_key(k):
+        # Sort by case (alphabetical), then shape (numerical descending), then dtype
+        case, shape, dtype = k
+        try:
+            m, n = map(int, shape.lower().split('x'))
+            shape_val = m * 1000000 + n # Large multiplier for m
+        except Exception:
+            shape_val = 0
+        return (case, -shape_val, dtype)
+
+    all_keys = sorted(set(dwh2_results.keys()) | set(gns_results.keys()), key=sort_key)
     
     header = [
         "Case", "Shape", "Dtype", 

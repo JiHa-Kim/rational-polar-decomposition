@@ -210,3 +210,6 @@ __marimo__/
 runs/
 profiles/
 profiles_*/
+
+# Data files
+results.jsonl*

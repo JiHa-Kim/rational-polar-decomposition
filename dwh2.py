@@ -94,13 +94,8 @@ class DWH2Workspace:
     sh: torch.Tensor
     invsh: torch.Tensor
 
-    # fp16/bf16 apply buffer
     k_cast: torch.Tensor
-
-    # normalization streaming buffer
     xbuf: torch.Tensor
-
-    # cholesky_ex outs
     L: torch.Tensor
     info: torch.Tensor
 
@@ -111,10 +106,10 @@ class DWH2Workspace:
         out_dtype: torch.dtype,
         block_rows: int = GRAM_BLOCK_ROWS,
     ) -> "DWH2Workspace":
-        def mat32():
+        def mat32() -> torch.Tensor:
             return torch.empty((n, n), device=device, dtype=torch.float32)
 
-        def vec32():
+        def vec32() -> torch.Tensor:
             return torch.empty((n,), device=device, dtype=torch.float32)
 
         return DWH2Workspace(
@@ -352,22 +347,21 @@ def dwh2_core(
     ell0: float = PAPER_MUON_ELL,
     params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
-    apply: str = "fp16",  # "fp16" (fast) or "fp32" (quality)
+    apply: str = "fp16",
     norm_scale: Optional[torch.Tensor] = None,
 ) -> PolarResult:
     assert apply in ("fp16", "fp32")
     transposed = a_norm.shape[0] < a_norm.shape[1]
-    x = a_norm.mT.contiguous() if transposed else a_norm.contiguous()
-    n = x.shape[1]
+    n = int(min(a_norm.shape))
 
     if (
         workspace is None
         or workspace.n != n
-        or workspace.device != x.device
-        or workspace.out_dtype != x.dtype
+        or workspace.device != a_norm.device
+        or workspace.out_dtype != a_norm.dtype
     ):
         workspace = DWH2Workspace.allocate(
-            n, x.device, x.dtype, block_rows=GRAM_BLOCK_ROWS
+            n, a_norm.device, a_norm.dtype, block_rows=GRAM_BLOCK_ROWS
         )
 
     stats = CholStats()
@@ -408,24 +402,20 @@ def dwh2_core(
     m0.diagonal().add_(s0.alpha)
     _symmetrize_(m0, scratch)
 
-    buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
-
-    # Stabilized GEMM pre-conditioning
     sh.copy_(h0.diagonal())
     torch.clamp_(sh, min=1e-30)
     torch.sqrt_(sh)
     invsh.copy_(sh).reciprocal_()
 
-    scratch.copy_(k0).mul_(sh[:, None])
     tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
-
+    scratch.copy_(k0).mul_(sh[:, None])
     torch.mm(tmp, scratch, out=cross)
     cross.mul_(sh[:, None])
 
+    buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
     buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
     buf.add_(cross, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
-    _symmetrize_(buf, scratch)
 
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
@@ -438,20 +428,26 @@ def dwh2_core(
     k_final.add_(tmp, alpha=s1.beta)
     _symmetrize_(k_final, scratch)
 
-    scale = None if norm_scale is None else norm_scale.to(device=x.device)
-
     if apply == "fp16":
         k_cast.copy_(k_final)
-        y = x @ k_cast
-        if scale is not None:
-            y.mul_(scale)
+        if norm_scale is not None:
+            k_cast.mul_(norm_scale.to(device=k_cast.device, dtype=k_cast.dtype))
+        if transposed:
+            y = k_cast @ a_norm
+        else:
+            y = a_norm @ k_cast
     else:
-        y = x.float() @ k_final
-        if scale is not None:
-            y.mul_(scale.to(dtype=y.dtype))
+        if norm_scale is not None:
+            tmp.copy_(k_final)
+            tmp.mul_(norm_scale.to(device=tmp.device, dtype=tmp.dtype))
+            k_apply = tmp
+        else:
+            k_apply = k_final
+        if transposed:
+            y = k_apply @ a_norm.float()
+        else:
+            y = a_norm.float() @ k_apply
 
-    if transposed:
-        y = y.mT.contiguous()
     return PolarResult(q=y, stats=stats)
 
 
@@ -466,7 +462,7 @@ def dwh2_end_to_end(
     apply: str = "fp16",
     inplace_normalize: bool = False,
 ) -> PolarResult:
-    del inplace_normalize  # normalization is fused into the final scalar output scale.
+    del inplace_normalize
 
     n = int(min(a.shape))
     if (

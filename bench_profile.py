@@ -58,8 +58,6 @@ class Record:
 
 
 class CaseGenerator:
-    """Handles matrix generation for benchmarking."""
-
     @staticmethod
     def _randn(
         shape, device: torch.device, seed: int, dtype: torch.dtype = torch.float32
@@ -119,7 +117,8 @@ class CaseGenerator:
             return z / chi2
         if name == "sparse_like":
             base = cls._randn((m, n), device, seed)
-            g = torch.Generator(device=device).manual_seed(seed + 1)
+            g = torch.Generator(device=device)
+            g.manual_seed(seed + 1)
             mask = torch.rand((m, n), device=device, generator=g) > 0.95
             return base * mask.float()
         if name == "orthogonal_noisy":
@@ -141,8 +140,6 @@ class CaseGenerator:
 
 
 class MetricsSuite:
-    """Calculates orthogonality and polar P metrics."""
-
     @staticmethod
     def _symmetrize_(a: torch.Tensor, scratch: torch.Tensor) -> None:
         scratch.copy_(a.mT)
@@ -155,12 +152,10 @@ class MetricsSuite:
         transposed = q.shape[0] < q.shape[1]
         Q = q.mT if transposed else q
         m, n = Q.shape
-        gram, xbuf, scratch, tmp = (
-            workspace.buf,
-            workspace.xbuf,
-            workspace.scratch,
-            workspace.tmp,
-        )
+        gram = workspace.buf
+        xbuf = workspace.xbuf
+        scratch = workspace.scratch
+        tmp = workspace.tmp
         gram.zero_()
         br = int(workspace.block_rows)
         for s in range(0, m, br):
@@ -184,12 +179,10 @@ class MetricsSuite:
         transposed = a_norm.shape[0] < a_norm.shape[1]
         X, Q = (a_norm.mT, q.mT) if transposed else (a_norm, q)
         m, _n = X.shape
-        P, xbuf, scratch, tmp = (
-            workspace.buf,
-            workspace.xbuf,
-            workspace.scratch,
-            workspace.tmp,
-        )
+        P = workspace.buf
+        xbuf = workspace.xbuf
+        scratch = workspace.scratch
+        tmp = workspace.tmp
         P.zero_()
         br = int(workspace.block_rows)
         qbuf = getattr(workspace, "_metric_qbuf", None)
@@ -217,8 +210,6 @@ class MetricsSuite:
 
 
 class BenchmarkRunner:
-    """Core logic for measuring execution time and collecting metrics."""
-
     def __init__(self, device: torch.device, args):
         self.device = device
         self.args = args
@@ -235,17 +226,24 @@ class BenchmarkRunner:
             "high" if not self.args.no_tf32 else "highest"
         )
 
+    def clear_transient_memory(self) -> None:
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+        gc.collect()
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
     def measure(
         self, fn: Callable[[], object], trials: int, warmup: int
     ) -> tuple[object, list[float]]:
+        out = None
         for _ in range(warmup):
-            fn()
-        torch.cuda.synchronize()
+            out = fn()
+        if self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
         times: list[float] = []
-        start, end = (
-            torch.cuda.Event(enable_timing=True),
-            torch.cuda.Event(enable_timing=True),
-        )
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
         for _ in range(trials):
             start.record()
             out = fn()
@@ -256,29 +254,28 @@ class BenchmarkRunner:
 
     def get_workspace(self, n: int, dtype_str: str) -> dwh2.DWH2Workspace:
         key = (n, dtype_str, self.device.index)
-        if key in self.ws_cache:
+        ws = self.ws_cache.get(key)
+        if ws is not None:
             self.ws_cache.move_to_end(key)
-            return self.ws_cache[key]
-        dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[
-            dtype_str
-        ]
+            return ws
+        dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[dtype_str]
         ws = dwh2.DWH2Workspace.allocate(
             n, self.device, dtype, block_rows=dwh2.GRAM_BLOCK_ROWS
         )
         self.ws_cache[key] = ws
+        self.ws_cache.move_to_end(key)
         while len(self.ws_cache) > max(0, self.args.ws_cache_max):
             _, old_ws = self.ws_cache.popitem(last=False)
             del old_ws
-            gc.collect()
-            torch.cuda.empty_cache()
+            self.clear_transient_memory()
         return ws
 
 
 class RegressionSuite:
-    """Integrates regression checking compactly."""
-
     @staticmethod
     def check(baseline_path, current_path, time_thresh=0.10, metric_thresh=0.05):
+        from collections import defaultdict
+
         def load(p):
             res = defaultdict(list)
             with open(p, "r", encoding="utf-8") as f:
@@ -295,8 +292,6 @@ class RegressionSuite:
                         )
                         res[k].append(r)
             return res
-
-        from collections import defaultdict
 
         base, curr = load(baseline_path), load(current_path)
         all_keys = sorted(set(base.keys()) | set(curr.keys()))
@@ -337,6 +332,28 @@ class RegressionSuite:
         if improvements:
             print(f"Detected {len(improvements)} improvements.")
 
+    @staticmethod
+    def summarize(path):
+        from collections import defaultdict
+        res = defaultdict(list)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for ln in f:
+                    if ln.strip():
+                        r = json.loads(ln)
+                        k = (r["method"], r["case"], r["shape"], r["dtype"])
+                        res[k].append(r)
+        except Exception:
+            return
+
+        print(f"\n{'Method':<6} {'Case':<20} {'Shape':<12} {'Med (ms)':<10} {'Ortho (F)':<12} {'P-Err (F)':<12}")
+        print("-" * 80)
+        for k in sorted(res.keys()):
+            m_ms = statistics.median([r["median_ms"] for r in res[k]])
+            o_fro = statistics.mean([r.get("ortho_fro", 0.0) for r in res[k]])
+            p_err = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in res[k]])
+            print(f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m_ms:<10.4f} {o_fro:<12.2e} {p_err:<12.2e}")
+
 
 def import_gns(gns_path: str):
     root = os.path.dirname(os.path.abspath(__file__))
@@ -359,10 +376,10 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
     try:
         try:
             mod = importlib.import_module("gram_newton_schulz.coefficients")
-        except ImportError, ModuleNotFoundError:
+        except (ImportError, ModuleNotFoundError):
             mod = importlib.import_module("newton_schulz.coefficients")
         coefs = getattr(mod, "POLAR_EXPRESS_COEFFICIENTS")
-    except ImportError, ModuleNotFoundError, AttributeError:
+    except (ImportError, ModuleNotFoundError, AttributeError):
         coefs = getattr(gns_mod, "POLAR_EXPRESS_COEFFICIENTS", None)
     gns = getattr(gns_mod, "GramNewtonSchulz")(
         ns_use_kernels=kernel,
@@ -395,12 +412,13 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
     return core
 
 
-def main():
+def main(argv: list[str] | None = None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--no-tf32", action="store_true")
-    ap.add_argument("--compile", action="store_true", default=False)
+    ap.add_argument("--compile", dest="compile", action="store_true")
     ap.add_argument("--no-compile", dest="compile", action="store_false")
+    ap.set_defaults(compile=True)
     ap.add_argument(
         "--compile-mode",
         default="max-autotune",
@@ -436,7 +454,7 @@ def main():
         default="stable/gns_baseline.jsonl",
         help="Load GNS results from file if skipped",
     )
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.hard:
         args.cases = "ill_conditioned,lowrank_noise"
         args.shapes = "16384x4096"
@@ -476,7 +494,7 @@ def main():
     if args.compile:
         logger.info(f"[compile] Jitting ({args.compile_mode})...")
         dwh2_core = torch.compile(dwh2_core, mode=args.compile_mode, fullgraph=False)
-        if gns_core:
+        if gns_core is not None:
             gns_core = torch.compile(gns_core, mode=args.compile_mode, fullgraph=False)
 
     params = dwh2.get_dwh2_params(dwh2.PAPER_MUON_ELL)
@@ -495,6 +513,7 @@ def main():
 
             def fn():
                 return fn_base(a_norm, g_norm, params=params, workspace=ws)
+
         else:
 
             def fn():
@@ -503,18 +522,20 @@ def main():
         out, times = runner.measure(fn, args.trials, args.warmup)
         return out, a_norm, g_norm, statistics.median(times), min(times)
 
-    cb = len(shapes) * len(cases) * len(seeds) * 2
-    bar = tqdm(total=cb, desc="bench", disable=args.quiet) if tqdm else None
+    count_methods = 1 if args.no_gns else 2
+    total = len(shapes) * len(cases) * len(seeds) * count_methods
+    bar = tqdm(total=total, desc="bench", disable=args.quiet) if tqdm else None
 
-    results = {}
     try:
         with torch.inference_mode():
             for m, n, s_str in shapes:
+                runner.clear_transient_memory()
                 ws = runner.get_workspace(min(m, n), args.dtype)
                 for case in cases:
+                    runner.clear_transient_memory()
                     for seed in seeds:
                         methods = [("dwh2", dwh2_core)]
-                        if not args.no_gns:
+                        if not args.no_gns and gns_core is not None:
                             methods.append(("gns", gns_core))
 
                         for name, core in methods:
@@ -555,12 +576,13 @@ def main():
                             out_f.flush()
                             if bar:
                                 bar.update(1)
-                            results[(name, case, s_str, seed)] = res
+
+                            del out, a_norm, g_norm
+                            runner.clear_transient_memory()
     finally:
         if bar:
             bar.close()
 
-        # Load stable GNS if skipped but baseline exists
         if args.no_gns and args.load_gns and os.path.exists(args.load_gns):
             logger.info(f"Merging GNS results from {args.load_gns}...")
             with open(args.load_gns, "r", encoding="utf-8") as gf:
@@ -568,16 +590,33 @@ def main():
                     if not line.strip():
                         continue
                     r = json.loads(line)
-                    # Simple filter to match current session parameters
-                    if (
-                        r.get("shape") in [s[2] for s in shapes]
-                        and r.get("case") in cases
-                    ):
+                    if r.get("shape") in [s[2] for s in shapes] and r.get("case") in cases:
                         out_f.write(json.dumps(r, sort_keys=True) + "\n")
 
         out_f.close()
         if args.baseline:
             RegressionSuite.check(args.baseline, args.output)
+
+
+def main_hard():
+    import sys
+    # Prepend defaults so that user-provided arguments can override them
+    defaults = [
+        "--hard",
+        "--trials", "1",
+        "--warmup", "1",
+        "--seeds", "0",
+        "--no-compile",
+    ]
+    main(defaults + sys.argv[1:])
+
+    # Print summary of the current output file
+    output_path = "results.jsonl"
+    for i, arg in enumerate(sys.argv):
+        if arg == "--output" and i + 1 < len(sys.argv):
+            output_path = sys.argv[i+1]
+    
+    RegressionSuite.summarize(output_path)
 
 
 if __name__ == "__main__":

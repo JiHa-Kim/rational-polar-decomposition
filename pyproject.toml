@@ -13,6 +13,13 @@ dependencies = [
     "tqdm>=4.67.3",
 ]
 
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["bench_profile", "dwh2"]
+
 [[tool.uv.index]]
 name = "pytorch-cuda"
 url = "https://download.pytorch.org/whl/cu130"
@@ -32,6 +39,10 @@ override-dependencies = [
     "apache-tvm-ffi; sys_platform == 'linux'",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
 ]
+
+[project.scripts]
+compare-hard = "bench_profile:main_hard"
+baseline-hard = "bench_profile:main_baseline"
 
 [tool.ruff.lint]
 ignore = ["E741"]

@@ -4,6 +4,7 @@ import argparse
 import gc
 import importlib
 import json
+import logging
 import math
 import os
 import statistics
@@ -20,6 +21,37 @@ try:
     from tqdm.auto import tqdm
 except Exception:  # pragma: no cover
     tqdm = None
+
+
+logger = logging.getLogger("bench_profile")
+
+
+def setup_logging(log_file: str, quiet: bool) -> None:
+    logger.setLevel(logging.DEBUG)
+
+    # File handler (all levels)
+    fh = logging.FileHandler(log_file)
+    fh.setLevel(logging.DEBUG)
+    fh_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    fh.setFormatter(fh_formatter)
+
+    # Console handler (INFO and above, clean format)
+    ch = logging.StreamHandler(sys.stderr)
+    ch.setLevel(logging.WARNING if quiet else logging.INFO)
+    ch_formatter = logging.Formatter("%(message)s")
+    ch.setFormatter(ch_formatter)
+
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
+
+def log_status(msg: str):
+    if tqdm is not None:
+        tqdm.write(msg)
+    else:
+        logger.info(msg)
 
 
 def set_fast_matmul(tf32: bool) -> None:
@@ -334,29 +366,17 @@ def _make_bar(total: int, desc: str):
 
 def _bar_update(bar, *, shape: str, case: str, seed: int, method: str, med: float, mn: float) -> None:
     if bar is None:
-        print(
-            f"[{method}] shape={shape} case={case} seed={seed} median={med:.4f}ms min={mn:.4f}ms",
-            file=sys.stderr,
-            flush=True,
-        )
+        logger.info(f"[{method}] {shape} {case} seed={seed} med={med:.2f}ms")
         return
-    bar.set_postfix_str(
-        f"{shape} {case} seed={seed} {method} med={med:.2f}ms min={mn:.2f}ms"
-    )
+    bar.set_postfix_str(f"{method} {shape} {case} med={med:.1f}ms")
     bar.update(1)
 
 
 def _bar_update_metrics(bar, *, shape: str, case: str, seed: int, method: str, ortho: float, p2g: float) -> None:
     if bar is None:
-        print(
-            f"[{method}] shape={shape} case={case} seed={seed} ortho={ortho:.3e} p2g={p2g:.3e}",
-            file=sys.stderr,
-            flush=True,
-        )
+        logger.info(f"[{method}] {shape} {case} seed={seed} ortho={ortho:.2e}")
         return
-    bar.set_postfix_str(
-        f"{shape} {case} seed={seed} {method} ortho={ortho:.2e} p2g={p2g:.2e}"
-    )
+    bar.set_postfix_str(f"{method} {shape} {case} ortho={ortho:.1e}")
     bar.update(1)
 
 
@@ -395,6 +415,8 @@ def main() -> None:
     ap.add_argument("--norm-safety", type=float, default=dwh2.NORM_SAFETY)
 
     ap.add_argument("--output", type=str, default="results.jsonl")
+    ap.add_argument("--log", type=str, default="bench_profile.log")
+    ap.add_argument("--quiet", action="store_true", help="Minimize console output.")
     ap.add_argument(
         "--no-metrics",
         action="store_true",
@@ -425,6 +447,7 @@ def main() -> None:
     )
 
     args = ap.parse_args()
+    setup_logging(args.log, args.quiet)
 
     device = torch.device(args.device)
     if device.type != "cuda":
@@ -445,18 +468,9 @@ def main() -> None:
     two_pass = (not args.one_pass) and (not args.no_metrics)
     timing_path = args.output + ".timing.jsonl"
 
-    if tqdm is None:
-        print(
-            f"[start] cfgs={len(shapes) * len(cases) * len(seeds)} seeds={len(seeds)} warmup={args.warmup} trials={args.trials}",
-            file=sys.stderr,
-            flush=True,
-        )
-    else:
-        print(
-            f"[start] cfgs={len(shapes) * len(cases) * len(seeds)} seeds={len(seeds)} warmup={args.warmup} trials={args.trials}",
-            file=sys.stderr,
-            flush=True,
-        )
+    logger.info(
+        f"[start] cfgs={len(shapes) * len(cases) * len(seeds)} seeds={len(seeds)} warmup={args.warmup} trials={args.trials}"
+    )
 
     gns_mod = import_gns(args.gns_path)
     gns_core = make_gns_core_runner(
@@ -516,9 +530,9 @@ def main() -> None:
 
     def write_line(fh, rec: Record) -> None:
         line = json.dumps(asdict(rec), sort_keys=True)
-        print(line, flush=True)
         fh.write(line + "\n")
         fh.flush()
+        logger.debug(f"Wrote result: {rec.method} {rec.case} {rec.shape}")
 
     timing_bar = _make_bar(len(shapes) * len(cases) * len(seeds) * 2, "timing")
     metrics_bar = None

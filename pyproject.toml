@@ -10,6 +10,7 @@ dependencies = [
     "triton-windows>=3.6.0.post26; sys_platform == 'win32'",
     "gram-newton-schulz",
     "quack-kernels",
+    "tqdm>=4.67.3",
 ]
 
 [[tool.uv.index]]

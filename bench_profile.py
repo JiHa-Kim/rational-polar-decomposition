@@ -1,18 +1,25 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import importlib
 import json
 import math
 import os
 import statistics
 import sys
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from typing import Callable
 
 import torch
 
 import dwh2
+
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover
+    tqdm = None
 
 
 def set_fast_matmul(tf32: bool) -> None:
@@ -29,11 +36,13 @@ def measure(
     out = None
     for _ in range(warmup):
         out = fn()
+
+    torch.cuda.synchronize()
+
     times: list[float] = []
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
     for _ in range(trials):
-        torch.cuda.synchronize()
         start.record()
         out = fn()
         end.record()
@@ -54,8 +63,8 @@ def ortho_stats(q: torch.Tensor, workspace: dwh2.DWH2Workspace) -> tuple[float, 
     Q = q.mT if transposed else q
     m, n = Q.shape
 
-    gram = workspace.buf  # [n, n] fp32 (keeps workspace.gram intact)
-    xbuf = workspace.xbuf  # [br, n] fp32
+    gram = workspace.buf
+    xbuf = workspace.xbuf
     scratch = workspace.scratch
     tmp = workspace.tmp
 
@@ -89,7 +98,7 @@ def polar_p_stats(
     Q = q.mT if transposed else q
     m, _n = X.shape
 
-    P = workspace.buf  # [n, n] fp32
+    P = workspace.buf
     xbuf = workspace.xbuf
     scratch = workspace.scratch
     tmp = workspace.tmp
@@ -97,7 +106,6 @@ def polar_p_stats(
     P.zero_()
     br = int(workspace.block_rows)
 
-    # Persistent fp32 chunk buffer for Q (avoid temporary float() allocations).
     qbuf = getattr(workspace, "_metric_qbuf", None)
     if qbuf is None or qbuf.shape != xbuf.shape or qbuf.dtype != torch.float32:
         qbuf = torch.empty_like(xbuf)
@@ -109,7 +117,6 @@ def polar_p_stats(
         qbuf[:r].copy_(Q[s : s + r])
         P.addmm_(qbuf[:r].mT, xbuf[:r])
 
-    # skew_rel = ||P - P^T||_F / ||P||_F
     scratch.copy_(P.mT)
     scratch.neg_()
     scratch.add_(P)
@@ -122,7 +129,6 @@ def polar_p_stats(
     p_fro = torch.sum(tmp, dtype=torch.float64).sqrt().clamp_min_(1e-30)
     skew_rel = float((skew_fro / p_fro).item())
 
-    # symmetrize P in-place, then compare P^2 to Gram
     _symmetrize_(P, scratch)
 
     torch.mm(P, P, out=tmp)
@@ -151,13 +157,11 @@ class Record:
     median_ms: float
     min_ms: float
 
-    # quality (not timed)
     ortho_fro: float
     ortho_max_abs: float
     p_skew_rel_fro: float
     p2_gram_rel_fro: float
 
-    # robustness (not timed)
     chol_calls: int
     chol_shifted_calls: int
     chol_total_retries: int
@@ -322,14 +326,48 @@ def make_case(
     raise ValueError(name)
 
 
+def _make_bar(total: int, desc: str):
+    if tqdm is None:
+        return None
+    return tqdm(total=total, desc=desc, dynamic_ncols=True, leave=True)
+
+
+def _bar_update(bar, *, shape: str, case: str, seed: int, method: str, med: float, mn: float) -> None:
+    if bar is None:
+        print(
+            f"[{method}] shape={shape} case={case} seed={seed} median={med:.4f}ms min={mn:.4f}ms",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    bar.set_postfix_str(
+        f"{shape} {case} seed={seed} {method} med={med:.2f}ms min={mn:.2f}ms"
+    )
+    bar.update(1)
+
+
+def _bar_update_metrics(bar, *, shape: str, case: str, seed: int, method: str, ortho: float, p2g: float) -> None:
+    if bar is None:
+        print(
+            f"[{method}] shape={shape} case={case} seed={seed} ortho={ortho:.3e} p2g={p2g:.3e}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    bar.set_postfix_str(
+        f"{shape} {case} seed={seed} {method} ortho={ortho:.2e} p2g={p2g:.2e}"
+    )
+    bar.update(1)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--no-tf32", action="store_true")
     ap.add_argument("--compile", action="store_true")
 
-    ap.add_argument("--trials", type=int, default=30)
-    ap.add_argument("--warmup", type=int, default=10)
+    ap.add_argument("--trials", type=int, default=15)
+    ap.add_argument("--warmup", type=int, default=5)
 
     ap.add_argument("--seeds", type=str, default="0,1")
     ap.add_argument(
@@ -365,7 +403,25 @@ def main() -> None:
     ap.add_argument(
         "--one-pass",
         action="store_true",
-        help="If set, compute speed+metrics per config (like before). Default is 2-pass (all timing, then all metrics).",
+        help="If set, compute speed+metrics per config. Default is 2-pass (all timing, then all metrics).",
+    )
+
+    ap.add_argument(
+        "--ws-cache-max",
+        type=int,
+        default=1,
+        help="Max cached DWH2 workspaces. 1 is safest on small GPUs.",
+    )
+    ap.add_argument(
+        "--empty-cache-threshold",
+        type=float,
+        default=0.90,
+        help="If reserved/total exceeds this, run torch.cuda.empty_cache().",
+    )
+    ap.add_argument(
+        "--no-empty-cache",
+        action="store_true",
+        help="Disable torch.cuda.empty_cache() pressure relief.",
     )
 
     args = ap.parse_args()
@@ -386,13 +442,44 @@ def main() -> None:
         shapes.append((int(m), int(n), s))
     reset_iters = [int(x) for x in args.gns_reset_iters.split(",") if x.strip()]
 
+    two_pass = (not args.one_pass) and (not args.no_metrics)
+    timing_path = args.output + ".timing.jsonl"
+
+    if tqdm is None:
+        print(
+            f"[start] cfgs={len(shapes) * len(cases) * len(seeds)} seeds={len(seeds)} warmup={args.warmup} trials={args.trials}",
+            file=sys.stderr,
+            flush=True,
+        )
+    else:
+        print(
+            f"[start] cfgs={len(shapes) * len(cases) * len(seeds)} seeds={len(seeds)} warmup={args.warmup} trials={args.trials}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     gns_mod = import_gns(args.gns_path)
     gns_core = make_gns_core_runner(
         gns_mod, use_kernels=bool(args.gns_use_kernels), reset_iters=reset_iters
     )
 
-    # Cache workspaces so VRAM stops climbing due to repeated allocate() calls.
-    ws_cache: dict[tuple[int, str, int | None], dwh2.DWH2Workspace] = {}
+    empty_cache_enabled = not bool(args.no_empty_cache)
+
+    def maybe_empty_cache(force: bool = False) -> None:
+        if not empty_cache_enabled or not torch.cuda.is_available():
+            return
+        if force:
+            torch.cuda.empty_cache()
+            return
+        try:
+            _, total = torch.cuda.mem_get_info()
+            reserved = torch.cuda.memory_reserved()
+            if total > 0 and float(reserved) / float(total) >= float(args.empty_cache_threshold):
+                torch.cuda.empty_cache()
+        except Exception:
+            return
+
+    ws_cache: OrderedDict[tuple[int, str, int | None], dwh2.DWH2Workspace] = OrderedDict()
 
     def get_ws(n_small: int, dtype_str: str) -> dwh2.DWH2Workspace:
         key = (
@@ -401,28 +488,50 @@ def main() -> None:
             int(device.index) if device.index is not None else None,
         )
         ws = ws_cache.get(key)
-        if ws is None:
-            # out_dtype must match a.dtype
-            out_dtype = (
-                torch.float16
-                if dtype_str == "fp16"
-                else (torch.bfloat16 if dtype_str == "bf16" else torch.float32)
-            )
-            ws = dwh2.DWH2Workspace.allocate(
-                n_small, device, out_dtype, block_rows=dwh2.GRAM_BLOCK_ROWS
-            )
-            ws_cache[key] = ws
+        if ws is not None:
+            ws_cache.move_to_end(key)
+            return ws
+
+        out_dtype = (
+            torch.float16
+            if dtype_str == "fp16"
+            else (torch.bfloat16 if dtype_str == "bf16" else torch.float32)
+        )
+        ws = dwh2.DWH2Workspace.allocate(
+            n_small, device, out_dtype, block_rows=dwh2.GRAM_BLOCK_ROWS
+        )
+        ws_cache[key] = ws
+        ws_cache.move_to_end(key)
+
+        while len(ws_cache) > int(max(0, args.ws_cache_max)):
+            _, old_ws = ws_cache.popitem(last=False)
+            del old_ws
+            gc.collect()
+            maybe_empty_cache(force=True)
+
         return ws
 
-    # Pass 1: timing only
-    timing: dict[tuple[str, str, str, int], tuple[float, float]] = {}
+    out_f = open(args.output, "w", encoding="utf-8")
+    timing_f = open(timing_path, "w", encoding="utf-8") if two_pass else None
 
-    out_f = open(args.output, "w", encoding="utf-8", buffering=1)
+    def write_line(fh, rec: Record) -> None:
+        line = json.dumps(asdict(rec), sort_keys=True)
+        print(line, flush=True)
+        fh.write(line + "\n")
+        fh.flush()
+
+    timing_bar = _make_bar(len(shapes) * len(cases) * len(seeds) * 2, "timing")
+    metrics_bar = None
+
     try:
+        timing: dict[tuple[str, str, str, int], tuple[float, float]] = {}
+
         with torch.inference_mode():
             for m, n, shape_str in shapes:
                 for case_name in cases:
                     for seed in seeds:
+                        maybe_empty_cache(force=False)
+
                         a = cast_dtype(
                             make_case(case_name, m, n, device=device, seed=seed),
                             args.dtype,
@@ -435,14 +544,22 @@ def main() -> None:
                             safety=float(args.norm_safety),
                             workspace=ws,
                         )
+                        del a
 
-                        def run_dwh2_core():
+                        def run_dwh2_core(
+                            a_norm_t: torch.Tensor = a_norm,
+                            gram_norm_t: torch.Tensor = gram_norm,
+                            ws_t: dwh2.DWH2Workspace = ws,
+                        ) -> dwh2.PolarResult:
                             return dwh2.dwh2_core(
-                                a_norm, gram_norm, ell0=float(args.ell0), workspace=ws
+                                a_norm_t,
+                                gram_norm_t,
+                                ell0=float(args.ell0),
+                                workspace=ws_t,
                             )
 
-                        def run_gns_core():
-                            y = gns_core(a_norm.half())
+                        def run_gns_core(a_norm_t: torch.Tensor = a_norm) -> dwh2.PolarResult:
+                            y = gns_core(a_norm_t.half())
                             return dwh2.PolarResult(q=y)
 
                         f_dwh2 = run_dwh2_core
@@ -454,9 +571,17 @@ def main() -> None:
                         for method, fn in [("dwh2", f_dwh2), ("gns", f_gns)]:
                             out, times = measure(fn, int(args.trials), int(args.warmup))
                             key = (method, case_name, shape_str, int(seed))
-                            timing[key] = (
-                                float(statistics.median(times)),
-                                float(min(times)),
+                            med = float(statistics.median(times))
+                            mn = float(min(times))
+                            timing[key] = (med, mn)
+                            _bar_update(
+                                timing_bar,
+                                shape=shape_str,
+                                case=case_name,
+                                seed=seed,
+                                method=method,
+                                med=med,
+                                mn=mn,
                             )
 
                             if args.one_pass:
@@ -466,7 +591,6 @@ def main() -> None:
                                 ortho_f, ortho_max = ortho_stats(q, ws)
                                 p_skew, p2g = polar_p_stats(a_norm, q, gram_norm, ws)
                                 torch.cuda.synchronize()
-
                                 rec = Record(
                                     method=method,
                                     case=case_name,
@@ -476,21 +600,18 @@ def main() -> None:
                                     compile=bool(args.compile),
                                     trials=int(args.trials),
                                     warmup=int(args.warmup),
-                                    median_ms=timing[key][0],
-                                    min_ms=timing[key][1],
+                                    median_ms=med,
+                                    min_ms=mn,
                                     ortho_fro=ortho_f,
                                     ortho_max_abs=ortho_max,
                                     p_skew_rel_fro=p_skew,
                                     p2_gram_rel_fro=p2g,
-                                    chol_calls=st.calls,
-                                    chol_shifted_calls=st.shifted_calls,
-                                    chol_total_retries=st.total_retries,
-                                    chol_max_jitter=st.max_jitter,
+                                    chol_calls=int(st.calls),
+                                    chol_shifted_calls=int(st.shifted_calls),
+                                    chol_total_retries=int(st.total_retries),
+                                    chol_max_jitter=float(st.max_jitter),
                                 )
-                                line = json.dumps(asdict(rec), sort_keys=True)
-                                print(line, flush=True)
-                                out_f.write(line + "\n")
-
+                                write_line(out_f, rec)
                             elif args.no_metrics:
                                 st = out.stats
                                 rec = Record(
@@ -502,28 +623,59 @@ def main() -> None:
                                     compile=bool(args.compile),
                                     trials=int(args.trials),
                                     warmup=int(args.warmup),
-                                    median_ms=timing[key][0],
-                                    min_ms=timing[key][1],
+                                    median_ms=med,
+                                    min_ms=mn,
                                     ortho_fro=float("nan"),
                                     ortho_max_abs=float("nan"),
                                     p_skew_rel_fro=float("nan"),
                                     p2_gram_rel_fro=float("nan"),
-                                    chol_calls=st.calls,
-                                    chol_shifted_calls=st.shifted_calls,
-                                    chol_total_retries=st.total_retries,
-                                    chol_max_jitter=st.max_jitter,
+                                    chol_calls=int(st.calls),
+                                    chol_shifted_calls=int(st.shifted_calls),
+                                    chol_total_retries=int(st.total_retries),
+                                    chol_max_jitter=float(st.max_jitter),
                                 )
-                                line = json.dumps(asdict(rec), sort_keys=True)
-                                print(line, flush=True)
-                                out_f.write(line + "\n")
+                                write_line(out_f, rec)
+                            elif timing_f is not None:
+                                st = out.stats if hasattr(out, "stats") else dwh2.CholStats()
+                                rec = Record(
+                                    method=method,
+                                    case=case_name,
+                                    shape=shape_str,
+                                    dtype=args.dtype,
+                                    tf32=bool(not args.no_tf32),
+                                    compile=bool(args.compile),
+                                    trials=int(args.trials),
+                                    warmup=int(args.warmup),
+                                    median_ms=med,
+                                    min_ms=mn,
+                                    ortho_fro=float("nan"),
+                                    ortho_max_abs=float("nan"),
+                                    p_skew_rel_fro=float("nan"),
+                                    p2_gram_rel_fro=float("nan"),
+                                    chol_calls=int(st.calls),
+                                    chol_shifted_calls=int(st.shifted_calls),
+                                    chol_total_retries=int(st.total_retries),
+                                    chol_max_jitter=float(st.max_jitter),
+                                )
+                                write_line(timing_f, rec)
+
+                        del a_norm
+                        del gram_norm
+                        gc.collect()
+                        maybe_empty_cache(force=False)
 
             if args.one_pass or args.no_metrics:
                 return
 
-            # Pass 2: metrics only (1 forward per method) using the stored timing.
+            if timing_bar is not None:
+                timing_bar.close()
+
+            metrics_bar = _make_bar(len(shapes) * len(cases) * len(seeds) * 2, "metrics")
             for m, n, shape_str in shapes:
                 for case_name in cases:
                     for seed in seeds:
+                        maybe_empty_cache(force=False)
+
                         a = cast_dtype(
                             make_case(case_name, m, n, device=device, seed=seed),
                             args.dtype,
@@ -535,23 +687,25 @@ def main() -> None:
                             safety=float(args.norm_safety),
                             workspace=ws,
                         )
+                        del a
 
-                        def run_dwh2_once():
+                        def run_dwh2_once(
+                            a_norm_t: torch.Tensor = a_norm,
+                            gram_norm_t: torch.Tensor = gram_norm,
+                            ws_t: dwh2.DWH2Workspace = ws,
+                        ) -> dwh2.PolarResult:
                             return dwh2.dwh2_core(
-                                a_norm, gram_norm, ell0=float(args.ell0), workspace=ws
+                                a_norm_t,
+                                gram_norm_t,
+                                ell0=float(args.ell0),
+                                workspace=ws_t,
                             )
 
-                        def run_gns_once():
-                            y = gns_core(a_norm.half())
+                        def run_gns_once(a_norm_t: torch.Tensor = a_norm) -> dwh2.PolarResult:
+                            y = gns_core(a_norm_t.half())
                             return dwh2.PolarResult(q=y)
 
-                        f_dwh2 = run_dwh2_once
-                        f_gns = run_gns_once
-                        if args.compile:
-                            f_dwh2 = torch.compile(f_dwh2, mode="max-autotune")  # type: ignore
-                            f_gns = torch.compile(f_gns, mode="max-autotune")  # type: ignore
-
-                        for method, fn in [("dwh2", f_dwh2), ("gns", f_gns)]:
+                        for method, fn in [("dwh2", run_dwh2_once), ("gns", run_gns_once)]:
                             out = fn()
                             q = out.q
                             st = out.stats
@@ -563,6 +717,15 @@ def main() -> None:
 
                             tkey = (method, case_name, shape_str, int(seed))
                             med, mn = timing[tkey]
+                            _bar_update_metrics(
+                                metrics_bar,
+                                shape=shape_str,
+                                case=case_name,
+                                seed=seed,
+                                method=method,
+                                ortho=ortho_f,
+                                p2g=p2g,
+                            )
 
                             rec = Record(
                                 method=method,
@@ -579,16 +742,24 @@ def main() -> None:
                                 ortho_max_abs=ortho_max,
                                 p_skew_rel_fro=p_skew,
                                 p2_gram_rel_fro=p2g,
-                                chol_calls=st.calls,
-                                chol_shifted_calls=st.shifted_calls,
-                                chol_total_retries=st.total_retries,
-                                chol_max_jitter=st.max_jitter,
+                                chol_calls=int(st.calls),
+                                chol_shifted_calls=int(st.shifted_calls),
+                                chol_total_retries=int(st.total_retries),
+                                chol_max_jitter=float(st.max_jitter),
                             )
-                            line = json.dumps(asdict(rec), sort_keys=True)
-                            print(line, flush=True)
-                            out_f.write(line + "\n")
+                            write_line(out_f, rec)
 
+                        del a_norm
+                        del gram_norm
+                        gc.collect()
+                        maybe_empty_cache(force=False)
     finally:
+        if timing_bar is not None:
+            timing_bar.close()
+        if metrics_bar is not None:
+            metrics_bar.close()
+        if timing_f is not None:
+            timing_f.close()
         out_f.close()
 
 

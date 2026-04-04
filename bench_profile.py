@@ -9,6 +9,7 @@ import math
 import os
 import statistics
 import sys
+import warnings
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from typing import Callable
@@ -379,7 +380,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--no-tf32", action="store_true")
-    ap.add_argument("--compile", action="store_true", default=True)
+    ap.add_argument("--compile", dest="compile", action="store_true")
+    ap.add_argument("--no-compile", dest="compile", action="store_false")
+    ap.set_defaults(compile=True)
+    ap.add_argument(
+        "--compile-mode",
+        type=str,
+        default="max-autotune",
+        choices=["reduce-overhead", "max-autotune"],
+    )
 
     ap.add_argument("--trials", type=int, default=15)
     ap.add_argument("--warmup", type=int, default=5)
@@ -443,6 +452,14 @@ def main() -> None:
     args = ap.parse_args()
     setup_logging(args.quiet)
 
+    # Dynamo and Inductor noise cleanup
+    torch._dynamo.config.capture_scalar_outputs = True
+    warnings.filterwarnings(
+        "ignore",
+        category=FutureWarning,
+        message=r".*torch\._prims_common\.check.*",
+    )
+
     device = torch.device(args.device)
     if device.type != "cuda":
         raise RuntimeError("This benchmark is tuned for CUDA GPUs.")
@@ -470,6 +487,15 @@ def main() -> None:
     gns_core = make_gns_core_runner(
         gns_mod, use_kernels=bool(args.gns_use_kernels), reset_iters=reset_iters
     )
+
+    dwh2_params = dwh2.get_dwh2_params(float(args.ell0))
+
+    f_dwh2 = dwh2.dwh2_core
+    f_gns = gns_core
+    if args.compile:
+        logger.info(f"[compile] Jitting dwh2 and gns ({args.compile_mode})...")
+        f_dwh2 = torch.compile(f_dwh2, mode=args.compile_mode, fullgraph=False)  # type: ignore[arg-type]
+        f_gns = torch.compile(f_gns, mode=args.compile_mode, fullgraph=False)  # type: ignore[arg-type]
 
     empty_cache_enabled = not bool(args.no_empty_cache)
 
@@ -555,34 +581,28 @@ def main() -> None:
                             eps=float(args.norm_eps),
                             safety=float(args.norm_safety),
                             workspace=ws,
+                            inplace=True,
                         )
                         del a
 
-                        def run_dwh2_core(
-                            a_norm_t: torch.Tensor = a_norm,
-                            gram_norm_t: torch.Tensor = gram_norm,
-                            ws_t: dwh2.DWH2Workspace = ws,
-                        ) -> dwh2.PolarResult:
-                            return dwh2.dwh2_core(
-                                a_norm_t,
-                                gram_norm_t,
-                                ell0=float(args.ell0),
-                                workspace=ws_t,
-                            )
+                        for method, fn_base in [("dwh2", f_dwh2), ("gns", f_gns)]:
+                            maybe_empty_cache(force=False)
+                            if method == "dwh2":
 
-                        def run_gns_core(
-                            a_norm_t: torch.Tensor = a_norm,
-                        ) -> dwh2.PolarResult:
-                            y = gns_core(a_norm_t.half())
-                            return dwh2.PolarResult(q=y)
+                                def fn(
+                                    a=a_norm,
+                                    g=gram_norm,
+                                    p=dwh2_params,
+                                    w=ws,
+                                    fn_impl=fn_base,
+                                ):
+                                    return fn_impl(a, g, params=p, workspace=w)
 
-                        f_dwh2 = run_dwh2_core
-                        f_gns = run_gns_core
-                        if args.compile:
-                            f_dwh2 = torch.compile(f_dwh2, mode="max-autotune")  # type: ignore
-                            f_gns = torch.compile(f_gns, mode="max-autotune")  # type: ignore
+                            else:
 
-                        for method, fn in [("dwh2", f_dwh2), ("gns", f_gns)]:
+                                def fn(a=a_norm, fn_impl=fn_base):
+                                    return dwh2.PolarResult(q=fn_impl(a))
+
                             out, times = measure(fn, int(args.trials), int(args.warmup))
                             key = (method, case_name, shape_str, int(seed))
                             med = float(statistics.median(times))
@@ -706,6 +726,7 @@ def main() -> None:
                             eps=float(args.norm_eps),
                             safety=float(args.norm_safety),
                             workspace=ws,
+                            inplace=True,
                         )
                         del a
 
@@ -717,14 +738,14 @@ def main() -> None:
                             return dwh2.dwh2_core(
                                 a_norm_t,
                                 gram_norm_t,
-                                ell0=float(args.ell0),
+                                params=dwh2_params,
                                 workspace=ws_t,
                             )
 
                         def run_gns_once(
                             a_norm_t: torch.Tensor = a_norm,
                         ) -> dwh2.PolarResult:
-                            y = gns_core(a_norm_t.half())
+                            y = gns_core(a_norm_t)
                             return dwh2.PolarResult(q=y)
 
                         for method, fn in [

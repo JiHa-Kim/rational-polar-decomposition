@@ -37,6 +37,8 @@ NORM_EPS = 1e-7
 NORM_SAFETY = 1.01
 GRAM_BLOCK_ROWS = 1024
 _BACKTRACK_ALPHA_LIMIT = 10.0
+_BACKTRACK_SHIFTED_ALPHA_SOFT_LIMIT = 2.0
+_BACKTRACK_SOLVE_RESID_LIMIT = 2e-2
 _BACKTRACK_SKEW_LIMIT = 1e-3
 _STABLE_RANK_TRIGGER = 0.95
 _ADAPTIVE_RIDGE_SCALE = 1e-6
@@ -223,7 +225,17 @@ def _stable_rank(a: torch.Tensor) -> float:
     return (t1 * t1) / t2
 
 
-def _adaptive_ridge_tensor(gram: torch.Tensor, n: int) -> torch.Tensor:
+def _adaptive_ridge_scale(out_dtype: torch.dtype) -> float:
+    if out_dtype == torch.bfloat16:
+        return 4.0 * _ADAPTIVE_RIDGE_SCALE
+    if out_dtype == torch.float32:
+        return 0.5 * _ADAPTIVE_RIDGE_SCALE
+    return _ADAPTIVE_RIDGE_SCALE
+
+
+def _adaptive_ridge_tensor(
+    gram: torch.Tensor, n: int, out_dtype: torch.dtype
+) -> torch.Tensor:
     trace64 = torch.sum(gram.diagonal(), dtype=torch.float64)
     fro2_64 = torch.sum(gram * gram, dtype=torch.float64)
     n64 = trace64.new_tensor(float(n))
@@ -232,14 +244,16 @@ def _adaptive_ridge_tensor(gram: torch.Tensor, n: int) -> torch.Tensor:
     ridge_frac = torch.clamp(1.0 - stable_rank / n64, min=0.0)
     ridge = torch.where(
         stable_rank < (_STABLE_RANK_TRIGGER * n64),
-        (_ADAPTIVE_RIDGE_SCALE * (trace64 / n64) * ridge_frac),
+        (_adaptive_ridge_scale(out_dtype) * (trace64 / n64) * ridge_frac),
         zero,
     )
     return ridge.to(dtype=gram.dtype)
 
 
-def _add_adaptive_ridge_tensor_(gram: torch.Tensor, n: int) -> None:
-    gram.diagonal().add_(_adaptive_ridge_tensor(gram, n))
+def _add_adaptive_ridge_tensor_(
+    gram: torch.Tensor, n: int, out_dtype: torch.dtype
+) -> None:
+    gram.diagonal().add_(_adaptive_ridge_tensor(gram, n, out_dtype))
 
 
 @torch.compiler.disable(recursive=False, reason="data-dependent cholesky retry loop")
@@ -474,20 +488,9 @@ def _cross_term_core(
     workspace: DWH2Workspace,
 ) -> torch.Tensor:
     scratch = workspace.scratch
-    tmp = workspace.tmp
     rhs = workspace.rhs
-    sh = workspace.sh
-    invsh = workspace.invsh
 
-    sh.copy_(h0.diagonal())
-    torch.clamp_(sh, min=1e-30)
-    torch.sqrt_(sh)
-    invsh.copy_(sh).reciprocal_()
-
-    tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
-    scratch.copy_(k0).mul_(sh[:, None])
-    torch.mm(tmp, scratch, out=rhs)
-    rhs.mul_(sh[:, None])
+    torch.mm(h0, k0, out=rhs)
     _symmetrize_(rhs, scratch)
     return rhs
 
@@ -526,6 +529,20 @@ def _solve_stage2_apply(
     torch.linalg.solve_triangular(L.mT, rhs, upper=True, left=True, out=rhs)
     tmp.copy_(rhs.mT)
     return tmp
+
+
+def _resolve_apply_mode(
+    apply: str,
+    workspace: DWH2Workspace,
+    *,
+    retries: int = 0,
+    theta: float = 1.0,
+) -> str:
+    if apply != "auto":
+        return apply
+    if workspace.out_dtype == torch.bfloat16 and (retries > 0 or theta < 1.0):
+        return "fp32"
+    return "fp16"
 
 
 def _apply_k_to_input(
@@ -572,18 +589,19 @@ def _dwh2_core_fast_impl(
     apply: str = "fp16",
     norm_scale: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    assert apply in ("fp16", "fp32")
+    assert apply in ("fp16", "fp32", "auto")
     del ell0
 
     n = int(min(a_norm.shape))
     workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype)
+    apply_mode = _resolve_apply_mode(apply, workspace)
 
     p = get_dwh2_params(PAPER_MUON_ELL) if params is None else params
     s0, s1, delta = p.step0, p.step1, p.delta
 
     gram = workspace.gram
     gram.copy_(gram_norm)
-    _add_adaptive_ridge_tensor_(gram, n)
+    _add_adaptive_ridge_tensor_(gram, n, workspace.out_dtype)
 
     h0, k0, m0 = _stage1_core(gram, workspace, s0, stats=None)
     rhs_cross = _cross_term_core(h0, k0, workspace)
@@ -599,7 +617,7 @@ def _dwh2_core_fast_impl(
         a_norm,
         k_final,
         workspace,
-        apply=apply,
+        apply=apply_mode,
         norm_scale=norm_scale,
     )
 
@@ -616,7 +634,7 @@ def _dwh2_core_impl(
     norm_scale: Optional[torch.Tensor] = None,
     stats: Optional[CholStats] = None,
 ) -> tuple[torch.Tensor, float, float, int, list[float], list[float]]:
-    assert apply in ("fp16", "fp32")
+    assert apply in ("fp16", "fp32", "auto")
     n = int(min(a_norm.shape))
     workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype)
 
@@ -640,21 +658,13 @@ def _dwh2_core_impl(
         s0, s1, delta = p.step0, p.step1, p.delta
 
         gram.copy_(gram_norm)
-
-        r_s = _stable_rank(gram)
-        if r_s < n * _STABLE_RANK_TRIGGER:
-            ridge = (
-                _ADAPTIVE_RIDGE_SCALE
-                * float(torch.sum(gram.diagonal(), dtype=torch.float64).item())
-                / float(n)
-                * max(0.0, 1.0 - r_s / float(n))
-            )
-            gram.diagonal().add_(ridge)
+        _add_adaptive_ridge_tensor_(gram, n, workspace.out_dtype)
 
         h0, k0, m0 = _stage1_core(gram, workspace, s0, stats=stats)
         rhs_cross = _cross_term_core(h0, k0, workspace)
         s_c = _mat_skew_rel(rhs_cross, scratch)
 
+        shifted_before = 0 if stats is None else stats.shifted_calls
         L = _stage2_core(
             gram,
             k0,
@@ -665,15 +675,24 @@ def _dwh2_core_impl(
             theta,
             stats=stats,
         )
+        stage2_shifted = (
+            False if stats is None else (stats.shifted_calls > shifted_before)
+        )
         tmp = _solve_stage2_apply(L, m0, workspace)
 
         alpha = _solve_amplification(tmp, m0)
+        solve_resid = _solve_residual_rel(workspace.buf, tmp, m0, workspace.resid)
         alpha_log.append(alpha)
         s_c_log.append(s_c)
 
-        if (
-            alpha > _BACKTRACK_ALPHA_LIMIT or s_c > _BACKTRACK_SKEW_LIMIT
-        ) and retry_count < max_retries:
+        need_retry = (
+            alpha > _BACKTRACK_ALPHA_LIMIT
+            or s_c > _BACKTRACK_SKEW_LIMIT
+            or solve_resid > _BACKTRACK_SOLVE_RESID_LIMIT
+            or (stage2_shifted and alpha > _BACKTRACK_SHIFTED_ALPHA_SOFT_LIMIT)
+        )
+
+        if need_retry and retry_count < max_retries:
             if theta > 0.125:
                 theta *= 0.5
             else:
@@ -687,11 +706,13 @@ def _dwh2_core_impl(
         _symmetrize_(k_final, scratch)
         break
 
+    apply_mode = _resolve_apply_mode(apply, workspace, retries=retry_count, theta=theta)
+
     res = _apply_k_to_input(
         a_norm,
         k_final,
         workspace,
-        apply=apply,
+        apply=apply_mode,
         norm_scale=norm_scale,
     )
     return res, theta, current_ell0, retry_count, alpha_log, s_c_log

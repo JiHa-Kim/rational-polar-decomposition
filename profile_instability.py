@@ -299,8 +299,6 @@ def stage_profile(
     work = ws.work if hasattr(ws, "work") else ws.rhs
     L = ws.L
     info = ws.info
-    sh = ws.sh
-    invsh = ws.invsh
 
     gram32.copy_(gram)
 
@@ -326,17 +324,7 @@ def stage_profile(
     dwh2._symmetrize_(m0, scratch)
     summaries.append(summarize_tensor("m0", m0, eigs=eigs))
 
-    sh.copy_(h0.diagonal())
-    torch.clamp_(sh, min=1e-30)
-    torch.sqrt_(sh)
-    invsh.copy_(sh).reciprocal_()
-    summaries.append(summarize_tensor("sqrt_diag_h0", sh, eigs=False))
-    summaries.append(summarize_tensor("invsqrt_diag", invsh, eigs=False))
-
-    tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
-    scratch.copy_(k0).mul_(sh[:, None])
-    torch.mm(tmp, scratch, out=cross)
-    cross.mul_(sh[:, None])
+    torch.mm(h0, k0, out=cross)
     dwh2._symmetrize_(cross, scratch)
     summaries.append(summarize_tensor("cross_term", cross, eigs=eigs))
 

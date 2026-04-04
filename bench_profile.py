@@ -9,6 +9,7 @@ import math
 import os
 import statistics
 import sys
+import time
 import warnings
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
@@ -227,9 +228,8 @@ class BenchmarkRunner:
     def clear_transient_memory(self) -> None:
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
-        gc.collect()
-        if self.device.type == "cuda":
             torch.cuda.empty_cache()
+        gc.collect()
 
     def measure(
         self, fn: Callable[[], object], trials: int, warmup: int
@@ -240,14 +240,21 @@ class BenchmarkRunner:
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         times: list[float] = []
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
+        if self.device.type == "cuda":
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            for _ in range(trials):
+                start.record()
+                out = fn()
+                end.record()
+                end.synchronize()
+                times.append(float(start.elapsed_time(end)))
+            return out, times
+
         for _ in range(trials):
-            start.record()
+            t0 = time.perf_counter()
             out = fn()
-            end.record()
-            end.synchronize()
-            times.append(float(start.elapsed_time(end)))
+            times.append((time.perf_counter() - t0) * 1000.0)
         return out, times
 
     def get_workspace(self, n: int, dtype_str: str) -> dwh2.DWH2Workspace:
@@ -513,14 +520,17 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     dwh2_mod = importlib.reload(dwh2)
-    dwh2_core = dwh2_mod.dwh2_core
+    dwh2_speed_core = dwh2_mod.dwh2_core_q
+    dwh2_quality_core = dwh2_mod.dwh2_core
     if args.compile:
-        logger.info(f"[compile] Jitting ({args.compile_mode})...")
-        dwh2_core = torch.compile(dwh2_core, mode=args.compile_mode, fullgraph=False)
+        logger.info(f"[compile] Jitting tensor-only fast path ({args.compile_mode})...")
+        dwh2_speed_core = torch.compile(
+            dwh2_speed_core, mode=args.compile_mode, fullgraph=False
+        )
         if gns_core is not None:
             gns_core = torch.compile(gns_core, mode=args.compile_mode, fullgraph=False)
 
-    params = dwh2.get_dwh2_params(dwh2.PAPER_MUON_ELL)
+    params = dwh2_mod.get_dwh2_params(dwh2_mod.PAPER_MUON_ELL)
 
     count_methods = 1 if args.no_gns else 2
     total = len(shapes) * len(cases) * len(seeds) * count_methods
@@ -529,34 +539,46 @@ def main(argv: list[str] | None = None) -> None:
     with open(args.output, "w", encoding="utf-8") as out_f:
         try:
             with torch.inference_mode():
+                dtype_map = {
+                    "fp16": torch.float16,
+                    "bf16": torch.bfloat16,
+                    "fp32": torch.float32,
+                }
                 for m, n, s_str in shapes:
                     runner.clear_transient_memory()
                     ws = runner.get_workspace(min(m, n), args.dtype)
                     for case in cases:
                         runner.clear_transient_memory()
                         for seed in seeds:
-                            methods = [("dwh2", dwh2_core)]
+                            methods = [("dwh2", dwh2_speed_core, dwh2_quality_core)]
                             if not args.no_gns and gns_core is not None:
-                                methods.append(("gns", gns_core))
+                                methods.append(("gns", gns_core, None))
 
-                            for name, core in methods:
-                                a = CaseGenerator.make_case(case, m, n, device, seed).to(
-                                    {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[args.dtype]
-                                )
-                                a_norm, g_norm = dwh2.normalize_moment_with_small_gram(
+                            a_master = CaseGenerator.make_case(case, m, n, device, seed).to(
+                                dtype_map[args.dtype]
+                            )
+
+                            for name, speed_core, quality_core in methods:
+                                a = a_master.clone()
+                                a_norm, g_norm = dwh2_mod.normalize_moment_with_small_gram(
                                     a, workspace=ws, inplace=True
                                 )
 
-                                def fn(an=a_norm, gn=g_norm):
+                                def fn_full(an=a_norm, gn=g_norm):
                                     if name == "dwh2":
-                                        return core(an, gn, params=params, workspace=ws)
-                                    return dwh2.PolarResult(q=core(an))
+                                        return quality_core(an, gn, params=params, workspace=ws)
+                                    return dwh2_mod.PolarResult(q=speed_core(an))
+
+                                def fn_speed(an=a_norm, gn=g_norm):
+                                    if name == "dwh2":
+                                        return speed_core(an, gn, params=params, workspace=ws)
+                                    return speed_core(an)
 
                                 if args.one_pass:
-                                    out, times = runner.measure(fn, args.trials, args.warmup)
+                                    out, times = runner.measure(fn_full, args.trials, args.warmup)
                                     med = statistics.median(times)
                                     mn = min(times)
-                                    st = getattr(out, "stats", dwh2.CholStats())
+                                    st = getattr(out, "stats", dwh2_mod.CholStats())
                                     if args.no_metrics:
                                         rec = Record(
                                             method=name,
@@ -598,7 +620,7 @@ def main(argv: list[str] | None = None) -> None:
                                             chol_max_jitter=st.max_jitter,
                                         )
                                 else:
-                                    out_speed, times = runner.measure(lambda: fn().q, args.trials, args.warmup)
+                                    _, times = runner.measure(fn_speed, args.trials, args.warmup)
                                     med = statistics.median(times)
                                     mn = min(times)
                                     if args.no_metrics:
@@ -615,9 +637,8 @@ def main(argv: list[str] | None = None) -> None:
                                             min_ms=mn,
                                         )
                                     else:
-                                        runner.clear_transient_memory()
-                                        out_qual, _ = runner.measure(fn, 1, 0)
-                                        st = getattr(out_qual, "stats", dwh2.CholStats())
+                                        out_qual, _ = runner.measure(fn_full, 1, 0)
+                                        st = getattr(out_qual, "stats", dwh2_mod.CholStats())
                                         ortho, o_max = MetricsSuite.ortho_stats(out_qual.q, ws)
                                         skew, p2g = MetricsSuite.polar_p_stats(a_norm, out_qual.q, g_norm, ws)
                                         rec = Record(
@@ -641,7 +662,6 @@ def main(argv: list[str] | None = None) -> None:
                                             chol_max_jitter=st.max_jitter,
                                         )
                                         del out_qual
-                                    del out_speed
 
                                 out_f.write(json.dumps(asdict(rec), sort_keys=True) + "\n")
                                 out_f.flush()
@@ -649,7 +669,9 @@ def main(argv: list[str] | None = None) -> None:
                                     bar.update(1)
 
                                 del a, a_norm, g_norm
-                                runner.clear_transient_memory()
+
+                            del a_master
+                        runner.clear_transient_memory()
         finally:
             if bar:
                 bar.close()

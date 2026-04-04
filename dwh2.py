@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from functools import lru_cache
 from typing import Optional
 
 import torch
@@ -63,7 +62,6 @@ def _dwh_coefficients_fp64(ell: float) -> tuple[float, float, float, float]:
     return float(alpha), float(beta), float(c), float(ell_next)
 
 
-@lru_cache(maxsize=64)
 def get_dwh2_params(ell0: float) -> DWH2Params:
     alpha0, beta0, c0, ell1 = _dwh_coefficients_fp64(float(ell0))
     alpha1, beta1, c1, _ = _dwh_coefficients_fp64(float(ell1))
@@ -169,6 +167,7 @@ def _gamma(length: int, unit_roundoff: float) -> float:
     return prod / (1.0 - prod)
 
 
+@torch.compiler.disable(recursive=False, reason="data-dependent cholesky retry loop")
 def _chol_spd_inplace_ex(
     a: torch.Tensor,
     stats: CholStats,
@@ -326,6 +325,7 @@ def dwh2_core(
     gram_norm: torch.Tensor,
     *,
     ell0: float = PAPER_MUON_ELL,
+    params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",  # "fp16" (fast) or "fp32" (quality)
 ) -> PolarResult:
@@ -345,7 +345,7 @@ def dwh2_core(
         )
 
     stats = CholStats()
-    p = get_dwh2_params(float(ell0))
+    p = params if params is not None else get_dwh2_params(float(ell0))
     s0, s1, delta = p.step0, p.step1, p.delta
 
     gram = workspace.gram

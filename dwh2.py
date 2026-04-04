@@ -25,6 +25,11 @@ class CholStats:
 class PolarResult:
     q: torch.Tensor
     stats: CholStats = field(default_factory=lambda: CholStats())
+    theta: float = 1.0
+    ell0: float = 1e-3
+    retries: int = 0
+    alpha_log: list[float] = field(default_factory=list)
+    s_c_log: list[float] = field(default_factory=list)
 
 
 PAPER_MUON_ELL = 1e-3
@@ -410,7 +415,7 @@ def _dwh2_core_impl(
     apply: str = "fp16",
     norm_scale: Optional[torch.Tensor] = None,
     stats: Optional[CholStats] = None,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, float, float, int, list[float], list[float]]:
     assert apply in ("fp16", "fp32")
     transposed = a_norm.shape[0] < a_norm.shape[1]
     n = int(min(a_norm.shape))
@@ -435,6 +440,8 @@ def _dwh2_core_impl(
     theta = 1.0
     retry_count = 0
     max_retries = 3
+    alpha_log: list[float] = []
+    s_c_log: list[float] = []
 
     while True:
         p = (
@@ -499,6 +506,9 @@ def _dwh2_core_impl(
         tmp.copy_(rhs.mT)
 
         alpha = _solve_amplification(tmp, m0)
+        
+        alpha_log.append(alpha)
+        s_c_log.append(s_c)
 
         # Change 3 & 4: Damping / Backtracking
         if (alpha > 10.0 or s_c > 1e-3) and retry_count < max_retries:
@@ -521,8 +531,10 @@ def _dwh2_core_impl(
         if norm_scale is not None:
             k_cast.mul_(norm_scale.to(device=k_cast.device, dtype=k_cast.dtype))
         if transposed:
-            return k_cast @ a_norm
-        return a_norm @ k_cast
+            res = k_cast @ a_norm
+        else:
+            res = a_norm @ k_cast
+        return res, theta, current_ell0, retry_count, alpha_log, s_c_log
 
     if norm_scale is not None:
         workspace.tmp.copy_(k_final)
@@ -530,9 +542,13 @@ def _dwh2_core_impl(
         k_apply = workspace.tmp
     else:
         k_apply = k_final
+
     if transposed:
-        return k_apply @ a_norm.float()
-    return a_norm.float() @ k_apply
+        res = k_apply @ a_norm.float()
+    else:
+        res = a_norm.float() @ k_apply
+
+    return res, theta, current_ell0, retry_count, alpha_log, s_c_log
 
 
 @torch.no_grad()
@@ -570,7 +586,7 @@ def dwh2_core(
     norm_scale: Optional[torch.Tensor] = None,
 ) -> PolarResult:
     stats = CholStats()
-    y = _dwh2_core_impl(
+    y, theta, final_ell0, retries, a_log, s_log = _dwh2_core_impl(
         a_norm,
         gram_norm,
         ell0=ell0,
@@ -580,7 +596,15 @@ def dwh2_core(
         norm_scale=norm_scale,
         stats=stats,
     )
-    return PolarResult(q=y, stats=stats)
+    return PolarResult(
+        q=y,
+        stats=stats,
+        theta=theta,
+        ell0=final_ell0,
+        retries=retries,
+        alpha_log=a_log,
+        s_c_log=s_log,
+    )
 
 
 @torch.no_grad()

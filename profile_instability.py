@@ -14,8 +14,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-import dwh2
-from bench_profile import CaseGenerator
+import dwh2  # noqa: E402
+from bench_profile import CaseGenerator  # noqa: E402
 
 
 @dataclass
@@ -187,7 +187,6 @@ def chol_probe(a_in: torch.Tensor, ws: dwh2.DWH2Workspace) -> dict[str, Any]:
     return out
 
 
-@torch.no_grad()
 def run_core_impl(
     a_norm: torch.Tensor,
     gram_norm: torch.Tensor,
@@ -196,7 +195,7 @@ def run_core_impl(
     params: dwh2.DWH2Params,
     apply: str,
     norm_scale: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
+) -> dwh2.PolarResult:
     return dwh2.dwh2_core(
         a_norm,
         gram_norm,
@@ -204,7 +203,7 @@ def run_core_impl(
         workspace=ws,
         apply=apply,
         norm_scale=norm_scale,
-    ).q
+    )
 
 
 @torch.no_grad()
@@ -345,13 +344,30 @@ def stage_profile(
     dwh2._symmetrize_(k_final, scratch)
     summaries.append(summarize_tensor("k_final", k_final, eigs=eigs))
 
-    q32 = run_core_impl(a_norm, gram, ws, params=params, apply="fp32")
+    # run_core_impl now returns PolarResult
+    res32 = run_core_impl(a_norm, gram, ws, params=params, apply="fp32")
+    q32 = res32.q
     summaries.append(summarize_tensor("q_apply_fp32", q32, eigs=False))
+    extras["fp32_stabilization"] = {
+        "theta": res32.theta,
+        "ell0": res32.ell0,
+        "retries": res32.retries,
+        "alpha_log": res32.alpha_log,
+        "s_c_log": res32.s_c_log,
+    }
 
     q16 = None
     if apply_compare:
-        q16 = run_core_impl(a_norm, gram, ws, params=params, apply="fp16")
+        res16 = run_core_impl(a_norm, gram, ws, params=params, apply="fp16")
+        q16 = res16.q
         summaries.append(summarize_tensor("q_apply_fp16", q16, eigs=False))
+        extras["fp16_stabilization"] = {
+            "theta": res16.theta,
+            "ell0": res16.ell0,
+            "retries": res16.retries,
+            "alpha_log": res16.alpha_log,
+            "s_c_log": res16.s_c_log,
+        }
         diff = q16.float() - q32.float()
         extras["q16_vs_q32_rel_fro"] = _safe_float(
             torch.linalg.matrix_norm(diff)
@@ -407,6 +423,19 @@ def stage_profile(
             )
         else:
             extras[f"{label}_ortho_to_proj_rel"] = float("nan")
+
+        # Polar Alignment Error: ||A - Q(Q^T A)|| / ||A||
+        if bool(torch.isfinite(qf).all().item()) and bool(torch.isfinite(a_norm).all().item()):
+            # H = Q^T A
+            h_mat = qf.mT @ a_norm.float()
+            # A_rec = Q H
+            a_rec = qf @ h_mat
+            extras[f"{label}_polar_alignment_rel"] = _safe_float(
+                torch.linalg.matrix_norm(a_norm.float() - a_rec)
+                / torch.linalg.matrix_norm(a_norm.float()).clamp_min(1e-30)
+            )
+        else:
+            extras[f"{label}_polar_alignment_rel"] = float("nan")
 
     return summaries, extras
 

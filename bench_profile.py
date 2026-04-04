@@ -704,33 +704,5 @@ def main_promote() -> None:
         print("Error: results.jsonl not found")
 
 
-def main_ab() -> None:
-    import subprocess
-
-    print("[A/B] Reverting dwh2.py to baseline...")
-    try:
-        subprocess.run(["git", "apply", "--reverse", "dwh2.diff"], check=True)
-    except subprocess.CalledProcessError:
-        print("Error: Could not revert dwh2.py (is it already baseline or is dwh2.diff invalid?)")
-        return
-
-    try:
-        print("[A/B] Running baseline...")
-        main_baseline()
-
-        print("\n[A/B] Restoring dwh2.py to current...")
-        subprocess.run(["git", "apply", "dwh2.diff"], check=True)
-
-        print("[A/B] Running current and comparing...")
-        main_hard()
-    except Exception as e:
-        print(f"Error during A/B: {e}")
-        print("[A/B] Attempting to restore dwh2.py...")
-        subprocess.run(["git", "apply", "dwh2.diff"], check=False)
-    finally:
-        # Ensure we are back to current even if success
-        pass
-
-
 if __name__ == "__main__":
     main()

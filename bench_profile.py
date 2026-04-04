@@ -26,16 +26,8 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger("bench_profile")
 
 
-def setup_logging(log_file: str, quiet: bool) -> None:
+def setup_logging(quiet: bool) -> None:
     logger.setLevel(logging.DEBUG)
-
-    # File handler (all levels)
-    fh = logging.FileHandler(log_file)
-    fh.setLevel(logging.DEBUG)
-    fh_formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    fh.setFormatter(fh_formatter)
 
     # Console handler (INFO and above, clean format)
     ch = logging.StreamHandler(sys.stderr)
@@ -43,7 +35,6 @@ def setup_logging(log_file: str, quiet: bool) -> None:
     ch_formatter = logging.Formatter("%(message)s")
     ch.setFormatter(ch_formatter)
 
-    logger.addHandler(fh)
     logger.addHandler(ch)
 
 
@@ -415,7 +406,6 @@ def main() -> None:
     ap.add_argument("--norm-safety", type=float, default=dwh2.NORM_SAFETY)
 
     ap.add_argument("--output", type=str, default="results.jsonl")
-    ap.add_argument("--log", type=str, default="bench_profile.log")
     ap.add_argument("--quiet", action="store_true", help="Minimize console output.")
     ap.add_argument(
         "--no-metrics",
@@ -447,7 +437,7 @@ def main() -> None:
     )
 
     args = ap.parse_args()
-    setup_logging(args.log, args.quiet)
+    setup_logging(args.quiet)
 
     device = torch.device(args.device)
     if device.type != "cuda":

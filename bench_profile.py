@@ -47,10 +47,10 @@ class Record:
     warmup: int
     median_ms: float
     min_ms: float
-    ortho_fro: float
-    ortho_max_abs: float
-    p_skew_rel_fro: float
-    p2_gram_rel_fro: float
+    ortho_fro: float = 0.0
+    ortho_max_abs: float = 0.0
+    p_skew_rel_fro: float = 0.0
+    p2_gram_rel_fro: float = 0.0
     chol_calls: int = 0
     chol_shifted_calls: int = 0
     chol_total_retries: int = 0
@@ -237,6 +237,11 @@ class BenchmarkRunner:
         self, fn: Callable[[], object], trials: int, warmup: int
     ) -> tuple[object, list[float]]:
         out = None
+        if warmup == 0 and trials > 0:
+            # Check if any global compile state is active or if we're in a compiled context
+            # This is a heuristic to prevent the "1700% hallucination"
+            logger.warning("Measuring with 0 warmup trials. If this is compiled code, the first trial may include significant JIT overhead.")
+
         for _ in range(warmup):
             out = fn()
         if self.device.type == "cuda":
@@ -258,7 +263,9 @@ class BenchmarkRunner:
         if ws is not None:
             self.ws_cache.move_to_end(key)
             return ws
-        dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[dtype_str]
+        dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[
+            dtype_str
+        ]
         ws = dwh2.DWH2Workspace.allocate(
             n, self.device, dtype, block_rows=dwh2.GRAM_BLOCK_ROWS
         )
@@ -273,11 +280,23 @@ class BenchmarkRunner:
 
 class RegressionSuite:
     @staticmethod
-    def check(baseline_path, current_path, time_thresh=0.10, metric_thresh=0.05):
+    def _color_diff(val: float, is_speed: bool = True) -> str:
+        # Green for speedup (negative diff) or quality improvement (negative diff)
+        # Red for regression (positive diff)
+        if abs(val) < 1e-6:
+            return f"{val * 100:>+7.1f}%"
+        color = "\033[92m" if val < 0 else "\033[91m"
+        reset = "\033[0m"
+        return f"{color}{val * 100:>+7.1f}%{reset}"
+
+    @staticmethod
+    def check(baseline_path, current_path, time_thresh=0.05, metric_thresh=0.01):
         from collections import defaultdict
 
         def load(p):
             res = defaultdict(list)
+            if not os.path.exists(p):
+                return res
             with open(p, "r", encoding="utf-8") as f:
                 for ln in f:
                     if ln.strip():
@@ -287,54 +306,59 @@ class RegressionSuite:
                             r["case"],
                             r["shape"],
                             r["dtype"],
-                            r["tf32"],
-                            r["compile"],
                         )
                         res[k].append(r)
             return res
 
         base, curr = load(baseline_path), load(current_path)
         all_keys = sorted(set(base.keys()) | set(curr.keys()))
-        regressions, improvements = [], []
 
         print(
-            f"\n{'Method':<6} {'Case':<20} {'Shape':<12} {'Metric':<15} {'Base':<10} {'Curr':<10} {'Diff %':<10}"
+            f"\n{'Method':<6} {'Case':<16} {'Shape':<12} {'Speed Delta':<14} {'Ortho Drift':<14} {'P-Err Drift':<14}"
         )
         print("-" * 88)
 
         for k in all_keys:
             if k not in base or k not in curr:
                 continue
-            for m in ["median_ms", "ortho_fro", "p2_gram_rel_fro"]:
-                b_val = statistics.mean([r[m] for r in base[k]])
-                c_val = statistics.mean([r[m] for r in curr[k]])
-                diff = (
-                    (c_val - b_val) / b_val
-                    if b_val != 0
-                    else (0 if c_val == 0 else float("inf"))
-                )
-                thresh = time_thresh if m == "median_ms" else metric_thresh
-                if diff > thresh:
-                    regressions.append((k, m, diff))
-                    print(
-                        f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m:<15} {b_val:<10.4f} {c_val:<10.4f} {diff * 100:>+7.1f}% [REGRESSION]"
-                    )
-                elif diff < -thresh:
-                    improvements.append((k, m, diff))
-                    print(
-                        f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m:<15} {b_val:<10.4f} {c_val:<10.4f} {diff * 100:>+7.1f}% [IMPROVED]"
-                    )
 
-        if regressions:
-            print(f"\nDetected {len(regressions)} regressions.")
-        elif not improvements:
-            print("\nNo significant regressions found.")
-        if improvements:
-            print(f"Detected {len(improvements)} improvements.")
+            # Speed comparison (median_ms)
+            b_med = statistics.median([r["median_ms"] for r in base[k]])
+            c_med = statistics.median([r["median_ms"] for r in curr[k]])
+            speed_diff = (c_med - b_med) / b_med if b_med > 0 else 0.0
+
+            # Quality comparison (ortho_fro)
+            b_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in base[k]])
+            c_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in curr[k]])
+            ortho_diff = (
+                (c_ortho - b_ortho) / b_ortho
+                if b_ortho > 1e-18
+                else (c_ortho - b_ortho)
+            )
+
+            # Quality comparison (p2_gram_rel_fro)
+            b_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in base[k]])
+            c_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in curr[k]])
+            perr_diff = (
+                (c_perr - b_perr) / b_perr if b_perr > 1e-18 else (c_perr - b_perr)
+            )
+
+            s_delta = RegressionSuite._color_diff(speed_diff)
+            o_delta = RegressionSuite._color_diff(ortho_diff, False)
+            p_delta = RegressionSuite._color_diff(perr_diff, False)
+
+            print(
+                f"{k[0]:<6} {k[1]:<16} {k[2]:<12} {s_delta:<23} {o_delta:<23} {p_delta:<23}"
+            )
 
     @staticmethod
-    def summarize(path):
+    def summarize(path, baseline=None):
+        if baseline:
+            RegressionSuite.check(baseline, path)
+            return
+
         from collections import defaultdict
+
         res = defaultdict(list)
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -346,13 +370,17 @@ class RegressionSuite:
         except Exception:
             return
 
-        print(f"\n{'Method':<6} {'Case':<20} {'Shape':<12} {'Med (ms)':<10} {'Ortho (F)':<12} {'P-Err (F)':<12}")
+        print(
+            f"\n{'Method':<6} {'Case':<20} {'Shape':<12} {'Med (ms)':<10} {'Ortho (F)':<12} {'P-Err (F)':<12}"
+        )
         print("-" * 80)
         for k in sorted(res.keys()):
             m_ms = statistics.median([r["median_ms"] for r in res[k]])
             o_fro = statistics.mean([r.get("ortho_fro", 0.0) for r in res[k]])
             p_err = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in res[k]])
-            print(f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m_ms:<10.4f} {o_fro:<12.2e} {p_err:<12.2e}")
+            print(
+                f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m_ms:<10.4f} {o_fro:<12.2e} {p_err:<12.2e}"
+            )
 
 
 def import_gns(gns_path: str):
@@ -376,10 +404,10 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
     try:
         try:
             mod = importlib.import_module("gram_newton_schulz.coefficients")
-        except (ImportError, ModuleNotFoundError):
+        except ImportError, ModuleNotFoundError:
             mod = importlib.import_module("newton_schulz.coefficients")
         coefs = getattr(mod, "POLAR_EXPRESS_COEFFICIENTS")
-    except (ImportError, ModuleNotFoundError, AttributeError):
+    except ImportError, ModuleNotFoundError, AttributeError:
         coefs = getattr(gns_mod, "POLAR_EXPRESS_COEFFICIENTS", None)
     gns = getattr(gns_mod, "GramNewtonSchulz")(
         ns_use_kernels=kernel,
@@ -500,27 +528,6 @@ def main(argv: list[str] | None = None):
     params = dwh2.get_dwh2_params(dwh2.PAPER_MUON_ELL)
     out_f = open(args.output, "w", encoding="utf-8")
 
-    def run_one(m, n, case, seed, method, fn_base, ws):
-        a = CaseGenerator.make_case(case, m, n, device, seed).to(
-            {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[
-                args.dtype
-            ]
-        )
-        a_norm, g_norm = dwh2.normalize_moment_with_small_gram(
-            a, workspace=ws, inplace=True
-        )
-        if method == "dwh2":
-
-            def fn():
-                return fn_base(a_norm, g_norm, params=params, workspace=ws)
-
-        else:
-
-            def fn():
-                return dwh2.PolarResult(q=fn_base(a_norm))
-
-        out, times = runner.measure(fn, args.trials, args.warmup)
-        return out, a_norm, g_norm, statistics.median(times), min(times)
 
     count_methods = 1 if args.no_gns else 2
     total = len(shapes) * len(cases) * len(seeds) * count_methods
@@ -539,9 +546,29 @@ def main(argv: list[str] | None = None):
                             methods.append(("gns", gns_core))
 
                         for name, core in methods:
-                            out, a_norm, g_norm, med, mn = run_one(
-                                m, n, case, seed, name, core, ws
+                            # SETUP
+                            a = CaseGenerator.make_case(case, m, n, device, seed).to(
+                                {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[args.dtype]
                             )
+                            a_norm, g_norm = dwh2.normalize_moment_with_small_gram(
+                                a, workspace=ws, inplace=True
+                            )
+
+                            def fn(an=a_norm, gn=g_norm):
+                                if name == "dwh2":
+                                    return core(an, gn, params=params, workspace=ws)
+                                else:
+                                    return dwh2.PolarResult(q=core(an))
+
+                            # PASS 1: Speed (no statistics)
+                            out_speed, times = runner.measure(
+                                lambda: fn().q,
+                                args.trials,
+                                args.warmup,
+                            )
+                            med = statistics.median(times)
+                            mn = min(times)
+
                             res = {
                                 "method": name,
                                 "case": case,
@@ -554,11 +581,16 @@ def main(argv: list[str] | None = None):
                                 "median_ms": med,
                                 "min_ms": mn,
                             }
+
+                            # PASS 2: Quality (1 trial, statistics)
                             if not args.no_metrics:
-                                st = getattr(out, "stats", dwh2.CholStats())
-                                ortho, o_max = MetricsSuite.ortho_stats(out.q, ws)
+                                runner.clear_transient_memory()
+                                out_qual, _ = runner.measure(fn, 1, 0)
+
+                                st = getattr(out_qual, "stats", dwh2.CholStats())
+                                ortho, o_max = MetricsSuite.ortho_stats(out_qual.q, ws)
                                 skew, p2g = MetricsSuite.polar_p_stats(
-                                    a_norm, out.q, g_norm, ws
+                                    a_norm, out_qual.q, g_norm, ws
                                 )
                                 res.update(
                                     {
@@ -572,12 +604,14 @@ def main(argv: list[str] | None = None):
                                         "chol_max_jitter": st.max_jitter,
                                     }
                                 )
+                                del out_qual
+
                             out_f.write(json.dumps(res, sort_keys=True) + "\n")
                             out_f.flush()
                             if bar:
                                 bar.update(1)
 
-                            del out, a_norm, g_norm
+                            del out_speed, a_norm, g_norm, a
                             runner.clear_transient_memory()
     finally:
         if bar:
@@ -590,33 +624,50 @@ def main(argv: list[str] | None = None):
                     if not line.strip():
                         continue
                     r = json.loads(line)
-                    if r.get("shape") in [s[2] for s in shapes] and r.get("case") in cases:
+                    if (
+                        r.get("shape") in [s[2] for s in shapes]
+                        and r.get("case") in cases
+                    ):
                         out_f.write(json.dumps(r, sort_keys=True) + "\n")
 
         out_f.close()
-        if args.baseline:
-            RegressionSuite.check(args.baseline, args.output)
+        # Always summarize the current result
+        RegressionSuite.summarize(args.output, baseline=args.baseline)
 
 
 def main_hard():
     import sys
+
     # Prepend defaults so that user-provided arguments can override them
     defaults = [
         "--hard",
-        "--trials", "1",
-        "--warmup", "1",
-        "--seeds", "0",
-        "--no-compile",
+        "--trials",
+        "10",
+        "--warmup",
+        "2",
+        "--seeds",
+        "0",
     ]
+    if os.path.exists("baseline.jsonl"):
+        defaults.extend(["--baseline", "baseline.jsonl"])
+
     main(defaults + sys.argv[1:])
 
-    # Print summary of the current output file
-    output_path = "results.jsonl"
-    for i, arg in enumerate(sys.argv):
-        if arg == "--output" and i + 1 < len(sys.argv):
-            output_path = sys.argv[i+1]
-    
-    RegressionSuite.summarize(output_path)
+
+def main_baseline():
+    import sys
+    defaults = [
+        "--hard",
+        "--trials",
+        "10",
+        "--warmup",
+        "2",
+        "--seeds",
+        "0",
+        "--output",
+        "baseline.jsonl",
+    ]
+    main(defaults + sys.argv[1:])
 
 
 if __name__ == "__main__":

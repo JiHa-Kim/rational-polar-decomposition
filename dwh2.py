@@ -374,12 +374,52 @@ def _apply_k(
     tmp: torch.Tensor,
 ) -> torch.Tensor:
     if apply == "fp16":
-        k_apply = workspace.ensure_k_cast()
-        k_apply.copy_(k_final)
-        if norm_scale is not None:
-            k_apply.mul_(norm_scale.to(device=k_apply.device, dtype=k_apply.dtype))
-        return k_apply @ a_norm if transposed else a_norm @ k_apply
+        out_dtype = workspace.out_dtype  # same dtype as a_norm
 
+        # Effective K is k_final * norm_scale.
+        # We calculate magnitudes in fp32 to decide on safe casting and downscaling.
+        k_raw_absmax = torch.amax(torch.abs(k_final)).float()
+        k_absmax = k_raw_absmax
+        if norm_scale is not None:
+            k_absmax = k_absmax * torch.abs(norm_scale.float())
+
+        # Conservative "safe max" below dtype max finite.
+        # (Use a margin so intermediate products don't flirt with INF.)
+        finfo = torch.finfo(out_dtype)
+        safe_max = 0.90 * float(finfo.max)
+
+        # Slow path (rare): power-of-two downscale K, matmul, then rescale output in fp32.
+        # Choose s = 2^ceil(log2(k_absmax/safe_max)).
+        # Using power-of-two keeps scaling exact in fp16/bf16 for many values.
+        s_f32 = 1.0
+        if float(k_absmax.item()) > safe_max:
+            ratio = (k_absmax / safe_max).clamp_min(1.0)
+            s_f32 = float(
+                torch.pow(torch.tensor(2.0, device=ratio.device), torch.ceil(torch.log2(ratio))).item()
+            )
+
+        k_apply = workspace.ensure_k_cast()
+
+        # IMPORTANT: If k_final would overflow fp16, OR if we have scales to apply,
+        # we must do so in fp32 before casting to k_apply.
+        if k_raw_absmax > float(finfo.max) or norm_scale is not None or s_f32 != 1.0:
+            tmp.copy_(k_final)
+            if norm_scale is not None:
+                tmp.mul_(norm_scale.to(device=tmp.device, dtype=tmp.dtype))
+            if s_f32 != 1.0:
+                tmp.div_(s_f32)
+            k_apply.copy_(tmp)
+        else:
+            k_apply.copy_(k_final)
+
+        q_scaled = k_apply @ a_norm if transposed else a_norm @ k_apply
+
+        # Rescale in fp32 to avoid fp16 overflow during the multiply-by-s step.
+        if s_f32 != 1.0:
+            return (q_scaled.float() * s_f32).to(dtype=out_dtype)
+        return q_scaled
+
+    # fp32 apply path
     if norm_scale is not None:
         tmp.copy_(k_final)
         tmp.mul_(norm_scale.to(device=tmp.device, dtype=tmp.dtype))

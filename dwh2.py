@@ -452,7 +452,6 @@ def _dwh2_core_impl(
     h0 = workspace.h0
     k0 = workspace.k0
     m0 = workspace.m0
-    tmp = workspace.tmp
     k_final = workspace.k_final
     sh = workspace.sh
     invsh = workspace.invsh
@@ -480,10 +479,10 @@ def _dwh2_core_impl(
     torch.sqrt_(sh)
     invsh.copy_(sh).reciprocal_()
 
-    tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
+    h0.mul_(invsh[:, None]).mul_(invsh[None, :])
     # Note: L is derived from gram + shifts; scratch is free for mm intermediate
     scratch.copy_(k0).mul_(sh[:, None])
-    torch.mm(tmp, scratch, out=L)
+    torch.mm(h0, scratch, out=L)
     L.mul_(sh[:, None])
 
     buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
@@ -495,10 +494,10 @@ def _dwh2_core_impl(
     scratch.copy_(m0.mT)
     torch.linalg.solve_triangular(L, scratch, upper=False, left=True, out=scratch)
     torch.linalg.solve_triangular(L.mT, scratch, upper=True, left=True, out=scratch)
-    tmp.copy_(scratch.mT)
+    h0.copy_(scratch.mT)
 
     k_final.copy_(m0).mul_(s1.alpha)
-    k_final.add_(tmp, alpha=s1.beta)
+    k_final.add_(h0, alpha=s1.beta)
     _symmetrize_(k_final, scratch)
 
     return _apply_k(
@@ -508,7 +507,7 @@ def _dwh2_core_impl(
         apply=apply,
         norm_scale=norm_scale,
         transposed=transposed,
-        tmp=tmp,
+        tmp=h0,
     )
 
 

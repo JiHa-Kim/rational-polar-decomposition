@@ -18,7 +18,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["bench_profile", "dwh2"]
+py-modules = ["dwh2"]
+packages = ["scripts"]
 
 [[tool.uv.index]]
 name = "pytorch-cuda"
@@ -41,9 +42,9 @@ override-dependencies = [
 ]
 
 [project.scripts]
-compare-hard = "bench_profile:main_hard"
-baseline-hard = "bench_profile:main_baseline"
-promote-baseline = "bench_profile:main_promote"
+compare-hard = "scripts.bench_profile:main_hard"
+baseline-hard = "scripts.bench_profile:main_baseline"
+promote-baseline = "scripts.bench_profile:main_promote"
 
 [tool.ruff.lint]
 ignore = ["E741"]

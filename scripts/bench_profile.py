@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -19,7 +20,13 @@ from collections import OrderedDict, defaultdict
 from dataclasses import asdict, dataclass
 from typing import Callable, Iterable
 
-from bench_common import CaseGenerator, DEFAULT_CASES, DEFAULT_SHAPES, DTYPE_MAP, MetricsSuite
+from bench_common import (
+    CaseGenerator,
+    DEFAULT_CASES,
+    DEFAULT_SHAPES,
+    DTYPE_MAP,
+    MetricsSuite,
+)
 
 try:
     from tqdm.auto import tqdm
@@ -206,11 +213,15 @@ class RegressionSuite:
 
             b_proj = mean_metric(base[key], "ortho_proj")
             c_proj = mean_metric(curr[key], "ortho_proj")
-            proj_diff = (c_proj - b_proj) / b_proj if b_proj > 1e-18 else (c_proj - b_proj)
+            proj_diff = (
+                (c_proj - b_proj) / b_proj if b_proj > 1e-18 else (c_proj - b_proj)
+            )
 
             b_supp = mean_metric(base[key], "ortho_supp")
             c_supp = mean_metric(curr[key], "ortho_supp")
-            supp_diff = (c_supp - b_supp) / b_supp if b_supp > 1e-18 else (c_supp - b_supp)
+            supp_diff = (
+                (c_supp - b_supp) / b_supp if b_supp > 1e-18 else (c_supp - b_supp)
+            )
 
             b_rec = mean_metric(base[key], "rec_resid")
             c_rec = mean_metric(curr[key], "rec_resid")
@@ -363,10 +374,10 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
     try:
         try:
             mod = importlib.import_module("gram_newton_schulz.coefficients")
-        except (ImportError, ModuleNotFoundError):
+        except ImportError, ModuleNotFoundError:
             mod = importlib.import_module("newton_schulz.coefficients")
         coefs = getattr(mod, "POLAR_EXPRESS_COEFFICIENTS")
-    except (ImportError, ModuleNotFoundError, AttributeError):
+    except ImportError, ModuleNotFoundError, AttributeError:
         coefs = getattr(gns_mod, "POLAR_EXPRESS_COEFFICIENTS", None)
 
     gns = getattr(gns_mod, "GramNewtonSchulz")(
@@ -386,8 +397,14 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
         ar = getattr(gns, "aspect_ratio_to_use_gram_newton_schulz", 1)
         use_gram = max(xb.shape[-2:]) > ar * min(xb.shape[-2:])
 
-        if hasattr(gns, "_gram_newton_schulz") and hasattr(gns, "_standard_newton_schulz"):
-            yb = gns._gram_newton_schulz(xb) if use_gram else gns._standard_newton_schulz(xb)
+        if hasattr(gns, "_gram_newton_schulz") and hasattr(
+            gns, "_standard_newton_schulz"
+        ):
+            yb = (
+                gns._gram_newton_schulz(xb)
+                if use_gram
+                else gns._standard_newton_schulz(xb)
+            )
             y = yb.squeeze(0)
         else:
             y = gns(x)
@@ -419,7 +436,9 @@ def method_specs(args, dwh2_mod, gns_core):
     return methods
 
 
-def record_base(args, name: str, case: str, shape: str, median_ms: float, min_ms: float) -> dict:
+def record_base(
+    args, name: str, case: str, shape: str, median_ms: float, min_ms: float
+) -> dict:
     return {
         "method": name,
         "case": case,
@@ -434,7 +453,17 @@ def record_base(args, name: str, case: str, shape: str, median_ms: float, min_ms
     }
 
 
-def make_record(args, name: str, case: str, shape: str, median_ms: float, min_ms: float, *, stats=None, chol_stats=None) -> Record:
+def make_record(
+    args,
+    name: str,
+    case: str,
+    shape: str,
+    median_ms: float,
+    min_ms: float,
+    *,
+    stats=None,
+    chol_stats=None,
+) -> Record:
     payload = record_base(args, name, case, shape, median_ms, min_ms)
     if stats is not None:
         payload.update(stats)
@@ -469,7 +498,9 @@ def benchmark_method(
     a_master,
 ):
     a = a_master.clone()
-    a_norm, g_norm = dwh2_mod.normalize_moment_with_small_gram(a, workspace=ws, inplace=True)
+    a_norm, g_norm = dwh2_mod.normalize_moment_with_small_gram(
+        a, workspace=ws, inplace=True
+    )
 
     def fn_full(an=a_norm, gn=g_norm):
         if name == "dwh2":
@@ -490,7 +521,11 @@ def benchmark_method(
             med, mn = median_and_min(times, False)
 
         chol_stats = getattr(out, "stats", dwh2_mod.CholStats())
-        metrics = None if args.no_metrics else MetricsSuite.all_stats(a_norm, out.q, g_norm, ws)
+        metrics = (
+            None
+            if args.no_metrics
+            else MetricsSuite.all_stats(a_norm, out.q, g_norm, ws)
+        )
         record = make_record(
             args,
             name,
@@ -558,7 +593,9 @@ def write_records(args) -> None:
     if not args.no_gns:
         gns_mod = import_gns(args.gns_path)
         if gns_mod is not None:
-            gns_core = make_gns_runner(gns_mod, args.gns_use_kernels, parse_int_csv(args.gns_reset_iters))
+            gns_core = make_gns_runner(
+                gns_mod, args.gns_use_kernels, parse_int_csv(args.gns_reset_iters)
+            )
 
     dwh2_mod = importlib.reload(dwh2)
     dwh2_speed_core = dwh2_mod.dwh2_core_q
@@ -572,7 +609,11 @@ def write_records(args) -> None:
         if gns_core is not None:
             gns_core = torch.compile(gns_core, mode=args.compile_mode, fullgraph=False)
 
-    ell0 = getattr(getattr(dwh2_mod, "DEFAULT_CONFIG", None), "ell0", getattr(dwh2_mod, "PAPER_MUON_ELL", 1e-3))
+    ell0 = getattr(
+        getattr(dwh2_mod, "DEFAULT_CONFIG", None),
+        "ell0",
+        getattr(dwh2_mod, "PAPER_MUON_ELL", 1e-3),
+    )
     params = dwh2_mod.get_dwh2_params(ell0)
 
     methods = method_specs(args, dwh2_mod, gns_core)
@@ -588,7 +629,9 @@ def write_records(args) -> None:
                     for case in cases:
                         runner.clear_transient_memory()
                         for seed in seeds:
-                            a_master = CaseGenerator.make_case(case, m, n, device, seed).to(DTYPE_MAP[args.dtype])
+                            a_master = CaseGenerator.make_case(
+                                case, m, n, device, seed
+                            ).to(DTYPE_MAP[args.dtype])
                             for name, speed_core, quality_core in methods:
                                 record = benchmark_method(
                                     args=args,
@@ -603,7 +646,9 @@ def write_records(args) -> None:
                                     shape=shape_str,
                                     a_master=a_master,
                                 )
-                                out_f.write(json.dumps(asdict(record), sort_keys=True) + "\n")
+                                out_f.write(
+                                    json.dumps(asdict(record), sort_keys=True) + "\n"
+                                )
                                 out_f.flush()
                                 if bar is not None:
                                     bar.update(1)
@@ -694,11 +739,27 @@ def main_hard() -> None:
 
     run_phase(
         "Phase 1: Fast no-compile regression check",
-        ["--trials", "5", "--warmup", "1", "--no-compile", "--output", "hard_no_compile.jsonl"],
+        [
+            "--trials",
+            "5",
+            "--warmup",
+            "1",
+            "--no-compile",
+            "--output",
+            "hard_no_compile.jsonl",
+        ],
     )
     run_phase(
         "Phase 2: Full compiled performance comparison",
-        ["--trials", "10", "--warmup", "2", "--compile", "--output", "hard_compile.jsonl"],
+        [
+            "--trials",
+            "10",
+            "--warmup",
+            "2",
+            "--compile",
+            "--output",
+            "hard_compile.jsonl",
+        ],
     )
 
 

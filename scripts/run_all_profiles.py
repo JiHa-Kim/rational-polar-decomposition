@@ -2,7 +2,13 @@ import subprocess
 import json
 import os
 
-cases = ["rank_1_heavy", "ill_conditioned", "lowrank_noise", "heavy_tail_t", "adversarial_condition"]
+cases = [
+    "rank_1_heavy",
+    "ill_conditioned",
+    "lowrank_noise",
+    "heavy_tail_t",
+    "adversarial_condition",
+]
 dtypes = ["fp16", "bf16"]
 
 results = []
@@ -12,11 +18,17 @@ for case in cases:
         print(f"Running profile for case={case}, dtype={dtype}...")
         json_file = f"temp_profile_{case}_{dtype}.json"
         cmd = [
-            "uv", "run", "python", "profile_instability.py",
-            "--case", case,
-            "--dtype", dtype,
+            "uv",
+            "run",
+            "python",
+            "profile_instability.py",
+            "--case",
+            case,
+            "--dtype",
+            dtype,
             "--apply-compare",
-            "--json", json_file
+            "--json",
+            json_file,
         ]
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)

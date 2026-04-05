@@ -1,5 +1,6 @@
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -148,7 +149,9 @@ def exact_spectrum(a: torch.Tensor) -> dict[str, float | int]:
     return {
         "lambda_min": _safe_float(evals[0]),
         "lambda_max": lam_max,
-        "stable_rank": _safe_float((evals.sum() ** 2) / evals.square().sum().clamp_min(1e-30)),
+        "stable_rank": _safe_float(
+            (evals.sum() ** 2) / evals.square().sum().clamp_min(1e-30)
+        ),
         "rank_eff_tol_1e12": int(nonzero.numel()),
         "cond_nonzero": _safe_float(nonzero[-1] / nonzero[0].clamp_min(1e-30))
         if nonzero.numel() >= 2
@@ -171,7 +174,9 @@ def chol_probe(a_in: torch.Tensor, ws: dwh2.DWH2Workspace) -> dict[str, Any]:
         return out
 
     stats = dwh2.CholStats()
-    dwh2._chol_spd_inplace_ex(a, stats, scratch=ws.scratch, L_out=ws.L, info_out=ws.info)
+    dwh2._chol_spd_inplace_ex(
+        a, stats, scratch=ws.scratch, L_out=ws.L, info_out=ws.info
+    )
     out.update(
         info_after_shift=int(ws.info.item()),
         shifted_calls=stats.shifted_calls,
@@ -197,11 +202,15 @@ def _build_rank_projector(
         proj = basis @ basis.mT
     else:
         proj = torch.zeros_like(G)
-    return proj, rank, {
-        "tau": tau,
-        "lambda_max": lam_max,
-        "lambda_min": _safe_float(evals[0]),
-    }
+    return (
+        proj,
+        rank,
+        {
+            "tau": tau,
+            "lambda_max": lam_max,
+            "lambda_min": _safe_float(evals[0]),
+        },
+    )
 
 
 @torch.no_grad()
@@ -240,7 +249,10 @@ def _extra_q_diagnostics(
     g_fro = torch.linalg.matrix_norm(G).clamp_min_(eps)
     out["proj_defect_rel"] = _safe_float(torch.linalg.matrix_norm(S @ S - S) / s_fro)
     out["support_resid_rel"] = _safe_float(
-        torch.linalg.matrix_norm((torch.eye(S.shape[0], device=S.device, dtype=S.dtype) - S) @ G) / g_fro
+        torch.linalg.matrix_norm(
+            (torch.eye(S.shape[0], device=S.device, dtype=S.dtype) - S) @ G
+        )
+        / g_fro
     )
 
     if projector is not None:
@@ -279,7 +291,9 @@ def stage_profile(
     s0, s1, delta = params.step0, params.step1, params.delta
 
     a_work = a.clone()
-    a_norm, gram = dwh2.normalize_moment_with_small_gram(a_work, workspace=ws, inplace=True)
+    a_norm, gram = dwh2.normalize_moment_with_small_gram(
+        a_work, workspace=ws, inplace=True
+    )
     summaries.extend(
         [
             summarize_tensor("a_input", a, eigs=False),
@@ -337,7 +351,9 @@ def stage_profile(
     buf.copy_(gram32).mul_(s0.c)
     buf.diagonal().add_(1.0)
     extras["chol0_probe"] = chol_probe(buf, ws)
-    L = dwh2._chol_spd_inplace_ex(buf, dwh2.CholStats(), scratch=scratch, L_out=L, info_out=info)
+    L = dwh2._chol_spd_inplace_ex(
+        buf, dwh2.CholStats(), scratch=scratch, L_out=L, info_out=info
+    )
     summaries.extend(
         [
             summarize_tensor("step0_buf", buf, eigs=eigs),
@@ -380,7 +396,9 @@ def stage_profile(
     buf.add_(rhs, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
     extras["chol1_probe"] = chol_probe(buf, ws)
-    L = dwh2._chol_spd_inplace_ex(buf, dwh2.CholStats(), scratch=scratch, L_out=L, info_out=info)
+    L = dwh2._chol_spd_inplace_ex(
+        buf, dwh2.CholStats(), scratch=scratch, L_out=L, info_out=info
+    )
     summaries.extend(
         [
             summarize_tensor("step1_buf", buf, eigs=eigs),
@@ -417,10 +435,12 @@ def stage_profile(
 
     for label, q in [
         ("fp32", q32),
-        *(([("fp16", q16)] if q16 is not None else [])),
+        *([("fp16", q16)] if q16 is not None else []),
     ]:
         _add_prefixed(extras, label, MetricsSuite.all_stats(a_norm, q, gram, ws))
-        _add_prefixed(extras, label, _extra_q_diagnostics(a_norm, q, gram, proj, proj_rank))
+        _add_prefixed(
+            extras, label, _extra_q_diagnostics(a_norm, q, gram, proj, proj_rank)
+        )
 
     return summaries, extras
 
@@ -433,7 +453,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shape", default="16384x4096")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--ell0", type=float, default=dwh2.DEFAULT_CONFIG.ell0)
-    parser.add_argument("--gram-block-rows", type=int, default=dwh2.DEFAULT_CONFIG.gram_block_rows)
+    parser.add_argument(
+        "--gram-block-rows", type=int, default=dwh2.DEFAULT_CONFIG.gram_block_rows
+    )
     parser.add_argument("--no-tf32", action="store_true")
     parser.add_argument("--eigs", action="store_true")
     parser.add_argument("--apply-compare", action="store_true")
@@ -455,7 +477,9 @@ def main() -> None:
     torch.set_float32_matmul_precision("high" if not args.no_tf32 else "highest")
 
     a = CaseGenerator.make_case(args.case, m, n, device, args.seed).to(dtype)
-    ws = dwh2.DWH2Workspace.allocate(min(m, n), device, dtype, block_rows=args.gram_block_rows)
+    ws = dwh2.DWH2Workspace.allocate(
+        min(m, n), device, dtype, block_rows=args.gram_block_rows
+    )
     summaries, extras = stage_profile(
         a,
         ws,
@@ -476,7 +500,11 @@ def main() -> None:
     print(json.dumps(extras, indent=2, sort_keys=True))
 
     if args.json:
-        payload = {"args": vars(args), "summaries": [asdict(s) for s in summaries], "extras": extras}
+        payload = {
+            "args": vars(args),
+            "summaries": [asdict(s) for s in summaries],
+            "extras": extras,
+        }
         with open(args.json, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True)
         print(f"Wrote {args.json}")

@@ -131,7 +131,9 @@ class MetricsSuite:
         a.add_(scratch).mul_(0.5)
 
     @staticmethod
-    def _views(a_norm: torch.Tensor, q: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _views(
+        a_norm: torch.Tensor, q: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if a_norm.shape[0] < a_norm.shape[1]:
             return a_norm.mT, q.mT
         return a_norm, q

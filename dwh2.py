@@ -72,6 +72,8 @@ class DWH2Workspace:
     xbuf: torch.Tensor
     L: torch.Tensor
     info: torch.Tensor
+    tmp: torch.Tensor
+    rhs: torch.Tensor
     k_cast: Optional[torch.Tensor] = None
 
     @staticmethod
@@ -104,6 +106,8 @@ class DWH2Workspace:
             xbuf=torch.empty((block_rows, n), device=device, dtype=torch.float32),
             L=mat32(),
             info=torch.empty((), device=device, dtype=torch.int32),
+            tmp=mat32(),
+            rhs=mat32(),
         )
 
     def ensure_k_cast(self) -> torch.Tensor:

@@ -11,8 +11,8 @@ def load_results(path):
             for line in f:
                 if line.strip():
                     r = json.loads(line)
-                    # Use case, shape, dtype as key
-                    k = (r["case"], r["shape"], r["dtype"])
+                    # Use (shape, dtype) as grouping key, (case) as sub-key
+                    k = (r["shape"], r["dtype"])
                     results[k].append(r)
     except FileNotFoundError:
         print(f"File not found: {path}")
@@ -20,94 +20,75 @@ def load_results(path):
 
 
 def format_markdown_table(dwh2_path, gns_path):
-    dwh2_results = load_results(dwh2_path)
-    gns_results = load_results(gns_path)
+    dwh2_raw = load_results(dwh2_path)
+    gns_raw = load_results(gns_path)
 
-    def sort_key(k):
-        # Sort by case (alphabetical), then shape (numerical descending), then dtype
-        case, shape, dtype = k
-        try:
-            m, n = map(int, shape.lower().split("x"))
-            shape_val = m * 1000000 + n  # Large multiplier for m
-        except Exception:
-            shape_val = 0
-        return (case, -shape_val, dtype)
+    all_groups = sorted(set(dwh2_raw.keys()) | set(gns_raw.keys()))
 
-    all_keys = sorted(set(dwh2_results.keys()) | set(gns_results.keys()), key=sort_key)
-
-    header = [
-        "Case",
-        "Shape",
-        "Dtype",
-        "DWH2 Med (ms)",
-        "GNS Med (ms)",
-        "Speedup",
-        "DWH2 Ortho (F)",
-        "GNS Ortho (F)",
-        "DWH2 P-Err (F)",
-        "GNS P-Err (F)",
+    metrics = [
+        ("Med ms", "median_ms", ".2f", False),
+        ("Ortho", "ortho_proj", ".2e", True),
+        ("Supp", "ortho_supp", ".2e", True),
+        ("Skew", "p_skew_rel_fro", ".2e", True),
+        ("P2-Err", "p2_gram_rel_fro", ".2e", True),
+        ("Rec", "rec_resid", ".2e", True),
     ]
 
-    rows = []
-    for k in all_keys:
-        case, shape, dtype = k
+    output = ["# DWH2 vs GNS Benchmark Comparison\n"]
 
-        d_recs = dwh2_results.get(k, [])
-        g_recs = gns_results.get(k, [])
+    for shape, dtype in all_groups:
+        output.append(f"## Shape: {shape}, Dtype: {dtype}\n")
+        
+        header = ["Case", "Method"] + [m[0] for m in metrics]
+        table = "| " + " | ".join(header) + " |\n"
+        table += "| " + " | ".join(["---"] * len(header)) + " |\n"
 
-        if not d_recs or not g_recs:
-            continue
+        # Organize by case
+        d_by_case = {r["case"]: r for r in dwh2_raw.get((shape, dtype), [])}
+        g_by_case = {r["case"]: r for r in gns_raw.get((shape, dtype), [])}
+        
+        all_cases = sorted(set(d_by_case.keys()) | set(g_by_case.keys()))
 
-        d_med = statistics.median([r["median_ms"] for r in d_recs])
-        g_med = statistics.median([r["median_ms"] for r in g_recs])
-        speedup = g_med / d_med if d_med > 0 else 0
+        for case in all_cases:
+            d_rec = d_by_case.get(case)
+            g_rec = g_by_case.get(case)
 
-        d_ortho = statistics.mean([r.get("ortho_proj", 0.0) for r in d_recs])
-        g_ortho = statistics.mean([r.get("ortho_proj", 0.0) for r in g_recs])
+            if not d_rec or not g_rec:
+                continue
 
-        d_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in d_recs])
-        g_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in g_recs])
+            d_row = [case, "DWH2"]
+            g_row = ["", "GNS"]
 
-        def highlight_better(v1, v2, precision=".2f", is_exp=False):
-            fmt = f"{{:{precision}}}" if not is_exp else f"{{:{precision}}}"
-            s1, s2 = fmt.format(v1), fmt.format(v2)
-            if v1 < v2:
-                return f"**{s1}**", s2
-            elif v2 < v1:
-                return s1, f"**{s2}**"
-            return s1, s2
+            for _, key, prec, is_exp in metrics:
+                dv = d_rec.get(key, 0.0)
+                gv = g_rec.get(key, 0.0)
 
-        d_ms_str, g_ms_str = highlight_better(d_med, g_med)
-        d_ortho_str, g_ortho_str = highlight_better(d_ortho, g_ortho, ".2e", True)
-        d_perr_str, g_perr_str = highlight_better(d_perr, g_perr, ".2e", True)
+                fmt = f"{{:{prec}}}"
+                ds, gs = fmt.format(dv), fmt.format(gv)
 
-        rows.append(
-            [
-                case,
-                shape,
-                dtype,
-                d_ms_str,
-                g_ms_str,
-                f"{speedup:.2f}x",
-                d_ortho_str,
-                g_ortho_str,
-                d_perr_str,
-                g_perr_str,
-            ]
-        )
+                # Skip comparison for metrics that are NaN or Inf
+                import math
+                if not math.isnan(dv) and not math.isnan(gv):
+                    if dv < gv:
+                        ds = f"**{ds}**"
+                    elif gv < dv:
+                        gs = f"**{gs}**"
+                
+                d_row.append(ds)
+                g_row.append(gs)
 
-    # Generate markdown string
-    table = "| " + " | ".join(header) + " |\n"
-    table += "| " + " | ".join(["---"] * len(header)) + " |\n"
-    for row in rows:
-        table += "| " + " | ".join(row) + " |\n"
+            table += "| " + " | ".join(d_row) + " |\n"
+            table += "| " + " | ".join(g_row) + " |\n"
 
-    return table
+        output.append(table)
+        output.append("\n")
+
+    return "\n".join(output)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Format DWH2 vs GNS comparison in a markdown table."
+        description="Format DWH2 vs GNS comparison in grouped markdown tables."
     )
     parser.add_argument(
         "--dwh2", default="results/dwh2_baseline.jsonl", help="Path to DWH2 results"

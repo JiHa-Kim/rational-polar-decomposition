@@ -484,8 +484,6 @@ def _dwh2_core_impl(
     k0 = workspace.k0
     m0 = workspace.m0
     k_final = workspace.k_final
-    sh = workspace.sh
-    invsh = workspace.invsh
     L = workspace.L
     info = workspace.info
 
@@ -517,7 +515,7 @@ def _dwh2_core_impl(
     buf.copy_(gram).mul_(s0.alpha * s0.alpha)
     buf.add_(k0, alpha=(2.0 * s0.alpha * s0.beta) / s0.c)
     buf.diagonal().add_(1.0 / c1)
-    
+
     # Fused calculation of L_prod = h0 @ k0 and its addition to buf
     buf.addmm_(h0, k0, alpha=(s0.beta * s0.beta) / s0.c, beta=1.0)
 

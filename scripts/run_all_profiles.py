@@ -42,7 +42,9 @@ for case in cases:
         except Exception as e:
             print(f"Error running {case} {dtype}: {e}")
 
-output_path = os.path.abspath(os.path.join(base_dir, "..", "results", "profile_results_all.json"))
+output_path = os.path.abspath(
+    os.path.join(base_dir, "..", "results", "profile_results_all.json")
+)
 with open(output_path, "w") as f:
     json.dump(results, f, indent=2)
 

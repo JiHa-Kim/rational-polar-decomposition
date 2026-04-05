@@ -311,7 +311,7 @@ def stage_profile(
     summaries.append(summarize_tensor("step0_buf", buf, eigs=eigs))
     summaries.append(summarize_tensor("step0_L", L, eigs=False))
 
-    dwh2._spd_inv_from_cholesky(L, h0, linv, work)
+    torch.cholesky_inverse(L, upper=False, out=h0)
     dwh2._symmetrize_(h0, scratch)
     summaries.append(summarize_tensor("h0", h0, eigs=eigs))
 
@@ -461,8 +461,8 @@ def main() -> None:
     ap.add_argument("--case", default="rank_1_heavy")
     ap.add_argument("--shape", default="16384x4096")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--ell0", type=float, default=dwh2.PAPER_MUON_ELL)
-    ap.add_argument("--gram-block-rows", type=int, default=dwh2.GRAM_BLOCK_ROWS)
+    ap.add_argument("--ell0", type=float, default=dwh2.DEFAULT_CONFIG.ell0)
+    ap.add_argument("--gram-block-rows", type=int, default=dwh2.DEFAULT_CONFIG.gram_block_rows)
     ap.add_argument("--no-tf32", action="store_true")
     ap.add_argument("--eigs", action="store_true")
     ap.add_argument("--apply-compare", action="store_true")

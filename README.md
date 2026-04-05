@@ -23,35 +23,33 @@ default cases.
 
 ## Quick start
 
-Default run:
+Default run (TF32 enabled by default):
 
 ```bash
-uv run bench --device cuda --tf32
+uv run python scripts/bench_profile.py --device cuda
+```
+
+To disable TF32:
+
+```bash
+uv run python scripts/bench_profile.py --device cuda --no-tf32
 ```
 
 Write JSONL output:
 
 ```bash
-uv run bench --device cuda --tf32 --output runs/run1/results.jsonl --quiet
+uv run python scripts/bench_profile.py --device cuda --output results/results.jsonl --quiet
 ```
 
-Run the low-memory projected-objective audit:
+Run full instability profiles:
 
 ```bash
-uv run bench --device cuda --tf32 --reference fp32 --audit --audit-device same --audit-chunk-rows 512
+uv run python scripts/run_all_profiles.py
 ```
-
-## Docs
-
-The README stays intentionally lean. Detailed notes live under [docs/](docs/README.md):
-
-- [docs/implementation.md](docs/implementation.md): algorithm, normalization, and SPD inverse details.
-- [docs/benchmarking.md](docs/benchmarking.md): cases, metrics, methodology, and detailed benchmark tables.
-- [docs/dwh2-smallside-diagnosis.md](docs/dwh2-smallside-diagnosis.md): ongoing bounded small-side DWH2 diagnosis log.
 
 ## Source layout
 
-- `src/polar_decomposition/algorithms`: DWH2 and PE5 implementations.
-- `src/polar_decomposition/utils`: normalization and SPD inverse helpers.
-- `src/polar_decomposition/kernels`: Triton/CUDA-specific fused kernels.
-- `src/polar_decomposition/cli`: benchmark, sweep, and profiling entrypoints.
+- `dwh2.py`: Main DWH2 implementation with stable rank and SPD inverse logic.
+- `scripts/bench_profile.py`: Performance benchmarking and metric collection.
+- `scripts/profile_instability.py`: Detailed stability analysis for specific matrix cases.
+- `scripts/run_all_profiles.py`: Orchestrator for full stability suite.

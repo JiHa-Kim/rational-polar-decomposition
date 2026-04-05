@@ -42,12 +42,14 @@ class Record:
     compile: bool
     trials: int
     warmup: int
-    median_ms: float
-    min_ms: float
-    ortho_fro: float = float("nan")
-    ortho_max_abs: float = float("nan")
+    median_ms: float = float("nan")
+    min_ms: float = float("nan")
+    ortho_proj: float = float("nan")
+    ortho_supp: float = float("nan")
     p_skew_rel_fro: float = float("nan")
     p2_gram_rel_fro: float = float("nan")
+    rec_resid: float = float("nan")
+    stable_rank: float = float("nan")
     chol_calls: int = 0
     chol_shifted_calls: int = 0
     chol_total_retries: int = 0
@@ -145,69 +147,102 @@ class MetricsSuite:
         a.add_(scratch).mul_(0.5)
 
     @classmethod
-    def ortho_stats(cls, q, workspace) -> tuple[float, float]:
-        import torch
-
-        transposed = q.shape[0] < q.shape[1]
-        Q = q.mT if transposed else q
-        m, n = Q.shape
-        gram = workspace.buf
-        xbuf = workspace.xbuf
-        scratch = workspace.scratch
-        tmp = workspace.tmp
-        gram.zero_()
-        br = int(workspace.block_rows)
-        for s in range(0, m, br):
-            r = min(br, m - s)
-            xbuf[:r].copy_(Q[s : s + r])
-            gram.addmm_(xbuf[:r].mT, xbuf[:r])
-        cls._symmetrize_(gram, scratch)
-        gram.diagonal().sub_(1.0)
-        tmp.copy_(gram).mul_(gram)
-        fro = torch.sum(tmp, dtype=torch.float64).sqrt() / math.sqrt(float(n))
-        return float(fro.item()), float(gram.abs().max().item())
-
-    @classmethod
-    def polar_p_stats(
+    def all_stats(
         cls,
         a_norm,
         q,
         gram_norm,
         workspace,
-    ) -> tuple[float, float]:
+    ) -> dict[str, float]:
         import torch
 
+        # Handle shapes
         transposed = a_norm.shape[0] < a_norm.shape[1]
         X, Q = (a_norm.mT, q.mT) if transposed else (a_norm, q)
-        m, _n = X.shape
-        P = workspace.buf
+        m, n = X.shape
+
+        eps = 1e-30
+        S = workspace.gram  # repurposed as S = Q^T Q
+        H = workspace.buf  # repurposed as H = Q^T X
         xbuf = workspace.xbuf
         scratch = workspace.scratch
         tmp = workspace.tmp
-        P.zero_()
+
+        S.zero_()
+        H.zero_()
         br = int(workspace.block_rows)
+
+        # Prepare qbuf
         qbuf = getattr(workspace, "_metric_qbuf", None)
         if qbuf is None or qbuf.shape != xbuf.shape or qbuf.dtype != torch.float32:
             qbuf = torch.empty_like(xbuf)
             setattr(workspace, "_metric_qbuf", qbuf)
+
+        # Batch form S and H to minimize passes
         for s in range(0, m, br):
             r = min(br, m - s)
             xbuf[:r].copy_(X[s : s + r])
             qbuf[:r].copy_(Q[s : s + r])
-            P.addmm_(qbuf[:r].mT, xbuf[:r])
-        scratch.copy_(P.mT).neg_().add_(P)
-        tmp.copy_(scratch).mul_(scratch)
-        skew_fro = torch.sum(tmp, dtype=torch.float64).sqrt()
-        tmp.copy_(P).mul_(P)
-        p_fro = torch.sum(tmp, dtype=torch.float64).sqrt().clamp_min_(1e-30)
-        skew_rel = float((skew_fro / p_fro).item())
-        cls._symmetrize_(P, scratch)
+            S.addmm_(qbuf[:r].mT, qbuf[:r])
+            H.addmm_(qbuf[:r].mT, xbuf[:r])
+
+        cls._symmetrize_(S, scratch)
+
+        # 1. Projector defect (e_proj)
+        # e_proj = |S^2 - S|_F / (|S|_F + eps)
+        torch.mm(S, S, out=tmp)
+        tmp.sub_(S)
+        e_proj_num = torch.sum(tmp * tmp, dtype=torch.float64).sqrt()
+        e_proj_den = torch.sum(S * S, dtype=torch.float64).sqrt().clamp_min_(eps)
+        e_proj = float((e_proj_num / e_proj_den).item())
+
+        # 2. Support consistency (e_supp)
+        # e_supp = |(I - S)G|_F / (|G|_F + eps)
+        tmp.copy_(S).neg_().diagonal().add_(1.0)  # (I - S)
+        torch.mm(tmp, gram_norm, out=scratch)
+        e_supp_num = torch.sum(scratch * scratch, dtype=torch.float64).sqrt()
+        e_supp_den = (
+            torch.sum(gram_norm * gram_norm, dtype=torch.float64).sqrt().clamp_min_(eps)
+        )
+        e_supp = float((e_supp_num / e_supp_den).item())
+
+        # 3. Skewness and P^2 error (existing p_skew and p2_gram)
+        # P = sym(H)
+        P = workspace.rhs  # repurposed
+        P.copy_(H.mT).add_(H).mul_(0.5)
+
+        skew = scratch.copy_(H).sub_(P)  # H - P
+        e_skew_num = torch.sum(skew * skew, dtype=torch.float64).sqrt()
+        e_skew_den = torch.sum(P * P, dtype=torch.float64).sqrt().clamp_min_(eps)
+        e_skew = float((e_skew_num / e_skew_den).item())
+
         torch.mm(P, P, out=tmp)
-        tmp.sub_(gram_norm).mul_(tmp)
-        err_fro = torch.sum(tmp, dtype=torch.float64).sqrt()
-        tmp.copy_(gram_norm).mul_(gram_norm)
-        g_fro = torch.sum(tmp, dtype=torch.float64).sqrt().clamp_min_(1e-30)
-        return skew_rel, float((err_fro / g_fro).item())
+        tmp.sub_(gram_norm)
+        e_p2_num = torch.sum(tmp * tmp, dtype=torch.float64).sqrt()
+        e_p2_den = e_supp_den  # |G|_F
+        e_p2 = float((e_p2_num / e_p2_den).item())
+
+        # 4. Reconstruction Residual (e_rec)
+        # |X - QP|_F^2 = tr(G) - 2 tr(P^T H) + tr(P^T S P)
+        trG = float(torch.diagonal(gram_norm).sum(dtype=torch.float64).item())
+        trPTH = float(torch.sum(P * H, dtype=torch.float64).item())
+        torch.mm(S, P, out=tmp)
+        trPTSP = float(torch.sum(P * tmp, dtype=torch.float64).item())
+
+        e_rec_sq = max(trG - 2.0 * trPTH + trPTSP, 0.0)
+        e_rec = float(math.sqrt(e_rec_sq) / (math.sqrt(max(trG, 0.0)) + eps))
+
+        # 5. Stable Rank (r_stable)
+        r_stable = float((trG * trG / (e_supp_den * e_supp_den)).item())
+
+        return {
+            "ortho_proj": e_proj,
+            "ortho_supp": e_supp,
+            "p_skew_rel_fro": e_skew,
+            "p2_gram_rel_fro": e_p2,
+            "rec_resid": e_rec,
+            "stable_rank": r_stable,
+        }
 
 
 class BenchmarkRunner:
@@ -326,32 +361,34 @@ class RegressionSuite:
         all_keys = sorted(set(base.keys()) | set(curr.keys()))
 
         print(
-            f"\n{'Method':<6} {'Case':<16} {'Shape':<12} {'Median (ms)':<20} {'Ortho (F)':<20} {'P-Err (F)':<20}"
+            f"\n{'Method':<6} {'Case':<16} {'Shape':<12} {'Median (ms)':<20} {'Proj Def':<20} {'Supp Def':<20} {'Rec (F)':<20}"
         )
-        print("-" * 100)
+        print("-" * 120)
 
         all_passed = True
         for k in all_keys:
             if k not in base or k not in curr:
                 continue
 
-            b_med = statistics.median([r["median_ms"] for r in base[k]])
-            c_med = statistics.median([r["median_ms"] for r in curr[k]])
-            time_diff = (c_med - b_med) / b_med if b_med > 0 else 0.0
+            b_med = statistics.median([r.get("median_ms", 0.0) for r in base[k]])
+            c_med = statistics.median([r.get("median_ms", 0.0) for r in curr[k]])
+            time_diff = (c_med - b_med) / b_med if b_med > 1e-6 else 0.0
 
-            b_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in base[k]])
-            c_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in curr[k]])
-            ortho_diff = (
-                (c_ortho - b_ortho) / b_ortho
-                if b_ortho > 1e-18
-                else (c_ortho - b_ortho)
+            b_proj = statistics.mean([r.get("ortho_proj", 0.0) for r in base[k]])
+            c_proj = statistics.mean([r.get("ortho_proj", 0.0) for r in curr[k]])
+            proj_diff = (
+                (c_proj - b_proj) / b_proj if b_proj > 1e-18 else (c_proj - b_proj)
             )
 
-            b_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in base[k]])
-            c_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in curr[k]])
-            perr_diff = (
-                (c_perr - b_perr) / b_perr if b_perr > 1e-18 else (c_perr - b_perr)
+            b_supp = statistics.mean([r.get("ortho_supp", 0.0) for r in base[k]])
+            c_supp = statistics.mean([r.get("ortho_supp", 0.0) for r in curr[k]])
+            supp_diff = (
+                (c_supp - b_supp) / b_supp if b_supp > 1e-18 else (c_supp - b_supp)
             )
+
+            b_rec = statistics.mean([r.get("rec_resid", 0.0) for r in base[k]])
+            c_rec = statistics.mean([r.get("rec_resid", 0.0) for r in curr[k]])
+            rec_diff = (c_rec - b_rec) / b_rec if b_rec > 1e-18 else (c_rec - b_rec)
 
             def fmt_abs_delta(abs_val, delta_val, is_speed=True):
                 delta_str = RegressionSuite._color_diff(delta_val, is_speed)
@@ -361,16 +398,17 @@ class RegressionSuite:
                     return f"{abs_val:>8.2e} ({delta_str:>7})"
 
             s_col = fmt_abs_delta(c_med, time_diff, True)
-            o_col = fmt_abs_delta(c_ortho, ortho_diff, False)
-            p_col = fmt_abs_delta(c_perr, perr_diff, False)
+            o_col = fmt_abs_delta(c_proj, proj_diff, False)
+            p_col = fmt_abs_delta(c_supp, supp_diff, False)
+            r_col = fmt_abs_delta(c_rec, rec_diff, False)
 
-            if (not math.isnan(ortho_diff) and ortho_diff > metric_thresh) or (
-                not math.isnan(perr_diff) and perr_diff > metric_thresh
+            if (not math.isnan(proj_diff) and proj_diff > metric_thresh) or (
+                not math.isnan(supp_diff) and supp_diff > metric_thresh
             ):
                 all_passed = False
 
             print(
-                f"{k[0]:<6} {k[1]:<16} {k[2]:<12} {s_col:<20} {o_col:<20} {p_col:<20}"
+                f"{k[0]:<6} {k[1]:<16} {k[2]:<12} {s_col:<20} {o_col:<20} {p_col:<20} {r_col:<20}"
             )
         return all_passed
 
@@ -392,15 +430,17 @@ class RegressionSuite:
                 return True
 
             print(
-                f"\n{'Method':<6} {'Case':<20} {'Shape':<12} {'Med (ms)':<10} {'Ortho (F)':<12} {'P-Err (F)':<12}"
+                f"\n{'Method':<6} {'Case':<20} {'Shape':<12} {'Med (ms)':<10} {'Proj':<12} {'Supp':<12} {'Rec':<12} {'Rank':<8}"
             )
-            print("-" * 80)
+            print("-" * 100)
             for k in sorted(res.keys()):
                 m_ms = statistics.median([r["median_ms"] for r in res[k]])
-                o_fro = statistics.mean([r.get("ortho_fro", 0.0) for r in res[k]])
-                p_err = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in res[k]])
+                o_proj = statistics.mean([r.get("ortho_proj", 0.0) for r in res[k]])
+                o_supp = statistics.mean([r.get("ortho_supp", 0.0) for r in res[k]])
+                p_rec = statistics.mean([r.get("rec_resid", 0.0) for r in res[k]])
+                rank = statistics.mean([r.get("stable_rank", 0.0) for r in res[k]])
                 print(
-                    f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m_ms:<10.4f} {o_fro:<12.2e} {p_err:<12.2e}"
+                    f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m_ms:<10.4f} {o_proj:<12.2e} {o_supp:<12.2e} {p_rec:<12.2e} {rank:<8.1f}"
                 )
             return True
 
@@ -581,6 +621,11 @@ def main(argv: list[str] | None = None) -> bool:
     ap.add_argument("--one-pass", action="store_true")
     ap.add_argument("--no-metrics", action="store_true")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument(
+        "--no-time",
+        action="store_true",
+        help="Skip timing trials and median/min ms report",
+    )
     ap.add_argument("--ws-cache-max", type=int, default=1)
     ap.add_argument("--gram-block-rows", type=int, default=1024)
     ap.add_argument("--gns-path", default="")
@@ -699,11 +744,17 @@ def main(argv: list[str] | None = None) -> bool:
                                     return speed_core(an)
 
                                 if args.one_pass:
-                                    out, times = runner.measure(
-                                        fn_full, args.trials, args.warmup
-                                    )
-                                    med = statistics.median(times)
-                                    mn = min(times)
+                                    if args.no_time:
+                                        out = fn_full()
+                                        times = []
+                                        med = mn = float("nan")
+                                    else:
+                                        out, times = runner.measure(
+                                            fn_full, args.trials, args.warmup
+                                        )
+                                        med = statistics.median(times)
+                                        mn = min(times)
+
                                     st = getattr(out, "stats", dwh2_mod.CholStats())
                                     if args.no_metrics:
                                         rec = Record(
@@ -723,10 +774,7 @@ def main(argv: list[str] | None = None) -> bool:
                                             chol_max_jitter=float(st.max_jitter),
                                         )
                                     else:
-                                        ortho, o_max = MetricsSuite.ortho_stats(
-                                            out.q, ws
-                                        )
-                                        skew, p2g = MetricsSuite.polar_p_stats(
+                                        stats = MetricsSuite.all_stats(
                                             a_norm, out.q, g_norm, ws
                                         )
                                         rec = Record(
@@ -740,21 +788,27 @@ def main(argv: list[str] | None = None) -> bool:
                                             warmup=args.warmup,
                                             median_ms=med,
                                             min_ms=mn,
-                                            ortho_fro=ortho,
-                                            ortho_max_abs=o_max,
-                                            p_skew_rel_fro=skew,
-                                            p2_gram_rel_fro=p2g,
+                                            ortho_proj=stats["ortho_proj"],
+                                            ortho_supp=stats["ortho_supp"],
+                                            p_skew_rel_fro=stats["p_skew_rel_fro"],
+                                            p2_gram_rel_fro=stats["p2_gram_rel_fro"],
+                                            rec_resid=stats["rec_resid"],
+                                            stable_rank=stats["stable_rank"],
                                             chol_calls=st.calls,
                                             chol_shifted_calls=st.shifted_calls,
                                             chol_total_retries=st.total_retries,
                                             chol_max_jitter=float(st.max_jitter),
                                         )
                                 else:
-                                    _, times = runner.measure(
-                                        fn_speed, args.trials, args.warmup
-                                    )
-                                    med = statistics.median(times)
-                                    mn = min(times)
+                                    if args.no_time:
+                                        med = mn = float("nan")
+                                    else:
+                                        _, times = runner.measure(
+                                            fn_speed, args.trials, args.warmup
+                                        )
+                                        med = statistics.median(times)
+                                        mn = min(times)
+
                                     if args.no_metrics:
                                         rec = Record(
                                             method=name,
@@ -773,10 +827,7 @@ def main(argv: list[str] | None = None) -> bool:
                                         st = getattr(
                                             out_qual, "stats", dwh2_mod.CholStats()
                                         )
-                                        ortho, o_max = MetricsSuite.ortho_stats(
-                                            out_qual.q, ws
-                                        )
-                                        skew, p2g = MetricsSuite.polar_p_stats(
+                                        stats = MetricsSuite.all_stats(
                                             a_norm, out_qual.q, g_norm, ws
                                         )
                                         rec = Record(
@@ -790,10 +841,12 @@ def main(argv: list[str] | None = None) -> bool:
                                             warmup=args.warmup,
                                             median_ms=med,
                                             min_ms=mn,
-                                            ortho_fro=ortho,
-                                            ortho_max_abs=o_max,
-                                            p_skew_rel_fro=skew,
-                                            p2_gram_rel_fro=p2g,
+                                            ortho_proj=stats["ortho_proj"],
+                                            ortho_supp=stats["ortho_supp"],
+                                            p_skew_rel_fro=stats["p_skew_rel_fro"],
+                                            p2_gram_rel_fro=stats["p2_gram_rel_fro"],
+                                            rec_resid=stats["rec_resid"],
+                                            stable_rank=stats["stable_rank"],
                                             chol_calls=st.calls,
                                             chol_shifted_calls=st.shifted_calls,
                                             chol_total_retries=st.total_retries,

@@ -25,23 +25,12 @@ class CholStats:
 class PolarResult:
     q: torch.Tensor
     stats: CholStats = field(default_factory=lambda: CholStats())
-    theta: float = 1.0
-    ell0: float = 1e-3
-    retries: int = 0
-    alpha_log: list[float] = field(default_factory=list)
-    s_c_log: list[float] = field(default_factory=list)
 
 
 PAPER_MUON_ELL = 1e-3
 NORM_EPS = 1e-7
 NORM_SAFETY = 1.01
 GRAM_BLOCK_ROWS = 1024
-_BACKTRACK_ALPHA_LIMIT = 10.0
-_BACKTRACK_SHIFTED_ALPHA_SOFT_LIMIT = 2.0
-_BACKTRACK_SOLVE_RESID_LIMIT = 2e-2
-_BACKTRACK_SKEW_LIMIT = 1e-3
-_STABLE_RANK_TRIGGER = 0.95
-_ADAPTIVE_RIDGE_SCALE = 1e-6
 
 
 @dataclass(frozen=True)
@@ -106,9 +95,6 @@ class DWH2Workspace:
     xbuf: torch.Tensor
     L: torch.Tensor
     info: torch.Tensor
-
-    b_mat: torch.Tensor
-    resid: torch.Tensor
     k_cast: Optional[torch.Tensor] = None
 
     @staticmethod
@@ -144,8 +130,6 @@ class DWH2Workspace:
             xbuf=torch.empty((block_rows, n), device=device, dtype=torch.float32),
             L=mat32(),
             info=torch.empty((), device=device, dtype=torch.int32),
-            b_mat=mat32(),
-            resid=mat32(),
         )
 
     def ensure_k_cast(self) -> torch.Tensor:
@@ -190,70 +174,6 @@ def _update_chol_stats(
 ) -> None:
     if stats is not None:
         stats.update(shifted=shifted, retries=retries, jitter=jitter)
-
-
-def _mat_skew_rel(a: torch.Tensor, scratch: torch.Tensor) -> float:
-    scratch.copy_(a.mT)
-    scratch.sub_(a)
-    numer = torch.linalg.matrix_norm(scratch)
-    denom = torch.linalg.matrix_norm(a).clamp_min(1e-30)
-    return float((numer / denom).item())
-
-
-def _solve_amplification(x: torch.Tensor, b: torch.Tensor) -> float:
-    return float((x.abs().max() / b.abs().max().clamp_min(1e-30)).item())
-
-
-def _solve_residual_rel(
-    a: torch.Tensor,
-    x: torch.Tensor,
-    b: torch.Tensor,
-    resid: torch.Tensor,
-) -> float:
-    resid.copy_(b)
-    resid.addmm_(a, x, alpha=-1.0)
-    numer = torch.linalg.matrix_norm(resid)
-    denom = torch.linalg.matrix_norm(b).clamp_min(1e-30)
-    return float((numer / denom).item())
-
-
-def _stable_rank(a: torch.Tensor) -> float:
-    t1 = float(torch.sum(a.diagonal(), dtype=torch.float64).item())
-    t2 = float(torch.sum(a * a, dtype=torch.float64).item())
-    if t2 <= 0.0:
-        return 0.0
-    return (t1 * t1) / t2
-
-
-def _adaptive_ridge_scale(out_dtype: torch.dtype) -> float:
-    if out_dtype == torch.bfloat16:
-        return 4.0 * _ADAPTIVE_RIDGE_SCALE
-    if out_dtype == torch.float32:
-        return 0.5 * _ADAPTIVE_RIDGE_SCALE
-    return _ADAPTIVE_RIDGE_SCALE
-
-
-def _adaptive_ridge_tensor(
-    gram: torch.Tensor, n: int, out_dtype: torch.dtype
-) -> torch.Tensor:
-    trace64 = torch.sum(gram.diagonal(), dtype=torch.float64)
-    fro2_64 = torch.sum(gram * gram, dtype=torch.float64)
-    n64 = trace64.new_tensor(float(n))
-    zero = trace64.new_zeros(())
-    stable_rank = torch.where(fro2_64 > 0.0, (trace64 * trace64) / fro2_64, zero)
-    ridge_frac = torch.clamp(1.0 - stable_rank / n64, min=0.0)
-    ridge = torch.where(
-        stable_rank < (_STABLE_RANK_TRIGGER * n64),
-        (_adaptive_ridge_scale(out_dtype) * (trace64 / n64) * ridge_frac),
-        zero,
-    )
-    return ridge.to(dtype=gram.dtype)
-
-
-def _add_adaptive_ridge_tensor_(
-    gram: torch.Tensor, n: int, out_dtype: torch.dtype
-) -> None:
-    gram.diagonal().add_(_adaptive_ridge_tensor(gram, n, out_dtype))
 
 
 @torch.compiler.disable(recursive=False, reason="data-dependent cholesky retry loop")
@@ -450,21 +370,41 @@ def normalize_moment_with_small_gram(
     return a_norm, gram
 
 
-def _stage1_core(
-    gram: torch.Tensor,
-    workspace: DWH2Workspace,
-    s0: StepParams,
-    stats: Optional[CholStats],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def _dwh2_core_impl(
+    a_norm: torch.Tensor,
+    gram_norm: torch.Tensor,
+    *,
+    ell0: float = PAPER_MUON_ELL,
+    params: Optional[DWH2Params] = None,
+    workspace: Optional[DWH2Workspace] = None,
+    apply: str = "fp16",
+    norm_scale: Optional[torch.Tensor] = None,
+    stats: Optional[CholStats] = None,
+) -> torch.Tensor:
+    assert apply in ("fp16", "fp32")
+    transposed = a_norm.shape[0] < a_norm.shape[1]
+    n = int(min(a_norm.shape))
+    workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype)
+
+    p = params if params is not None else get_dwh2_params(float(ell0))
+    s0, s1, delta = p.step0, p.step1, p.delta
+
+    gram = workspace.gram
     buf = workspace.buf
     scratch = workspace.scratch
     h0 = workspace.h0
     k0 = workspace.k0
     m0 = workspace.m0
+    tmp = workspace.tmp
     rhs = workspace.rhs
+    k_final = workspace.k_final
     linv = workspace.linv
+    sh = workspace.sh
+    invsh = workspace.invsh
     L = workspace.L
     info = workspace.info
+
+    gram.copy_(gram_norm)
 
     buf.copy_(gram).mul_(s0.c)
     buf.diagonal().add_(1.0)
@@ -479,81 +419,32 @@ def _stage1_core(
     m0.copy_(h0).mul_(s0.beta)
     m0.diagonal().add_(s0.alpha)
     _symmetrize_(m0, scratch)
-    return h0, k0, m0
 
+    sh.copy_(h0.diagonal())
+    torch.clamp_(sh, min=1e-30)
+    torch.sqrt_(sh)
+    invsh.copy_(sh).reciprocal_()
 
-def _cross_term_core(
-    h0: torch.Tensor,
-    k0: torch.Tensor,
-    workspace: DWH2Workspace,
-) -> torch.Tensor:
-    scratch = workspace.scratch
-    rhs = workspace.rhs
-
-    torch.mm(h0, k0, out=rhs)
-    _symmetrize_(rhs, scratch)
-    return rhs
-
-
-def _stage2_core(
-    gram: torch.Tensor,
-    k0: torch.Tensor,
-    rhs_cross: torch.Tensor,
-    workspace: DWH2Workspace,
-    s0: StepParams,
-    delta: float,
-    theta: float,
-    stats: Optional[CholStats],
-) -> torch.Tensor:
-    buf = workspace.buf
-    scratch = workspace.scratch
-    L = workspace.L
-    info = workspace.info
+    tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
+    scratch.copy_(k0).mul_(sh[:, None])
+    torch.mm(tmp, scratch, out=rhs)
+    rhs.mul_(sh[:, None])
 
     buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
     buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
-    buf.add_(rhs_cross, alpha=delta * (s0.beta * s0.beta) * theta)
+    buf.add_(rhs, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
-    return _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
+    L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
-def _solve_stage2_apply(
-    L: torch.Tensor,
-    m0: torch.Tensor,
-    workspace: DWH2Workspace,
-) -> torch.Tensor:
-    rhs = workspace.rhs
-    tmp = workspace.tmp
     rhs.copy_(m0.mT)
     torch.linalg.solve_triangular(L, rhs, upper=False, left=True, out=rhs)
     torch.linalg.solve_triangular(L.mT, rhs, upper=True, left=True, out=rhs)
     tmp.copy_(rhs.mT)
-    return tmp
 
-
-def _resolve_apply_mode(
-    apply: str,
-    workspace: DWH2Workspace,
-    *,
-    retries: int = 0,
-    theta: float = 1.0,
-) -> str:
-    if apply != "auto":
-        return apply
-    if workspace.out_dtype == torch.bfloat16 and (retries > 0 or theta < 1.0):
-        return "fp32"
-    return "fp16"
-
-
-def _apply_k_to_input(
-    a_norm: torch.Tensor,
-    k_final: torch.Tensor,
-    workspace: DWH2Workspace,
-    *,
-    apply: str,
-    norm_scale: Optional[torch.Tensor],
-) -> torch.Tensor:
-    transposed = a_norm.shape[0] < a_norm.shape[1]
+    k_final.copy_(m0).mul_(s1.alpha)
+    k_final.add_(tmp, alpha=s1.beta)
+    _symmetrize_(k_final, scratch)
 
     if apply == "fp16":
         k_cast = workspace.ensure_k_cast()
@@ -565,157 +456,14 @@ def _apply_k_to_input(
         return a_norm @ k_cast
 
     if norm_scale is not None:
-        workspace.tmp.copy_(k_final)
-        workspace.tmp.mul_(
-            norm_scale.to(device=workspace.tmp.device, dtype=workspace.tmp.dtype)
-        )
-        k_apply = workspace.tmp
+        tmp.copy_(k_final)
+        tmp.mul_(norm_scale.to(device=tmp.device, dtype=tmp.dtype))
+        k_apply = tmp
     else:
         k_apply = k_final
-
     if transposed:
         return k_apply @ a_norm.float()
     return a_norm.float() @ k_apply
-
-
-@torch.no_grad()
-def _dwh2_core_fast_impl(
-    a_norm: torch.Tensor,
-    gram_norm: torch.Tensor,
-    *,
-    ell0: float = PAPER_MUON_ELL,
-    params: Optional[DWH2Params] = None,
-    workspace: Optional[DWH2Workspace] = None,
-    apply: str = "fp16",
-    norm_scale: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
-    assert apply in ("fp16", "fp32", "auto")
-    del ell0
-
-    n = int(min(a_norm.shape))
-    workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype)
-    apply_mode = _resolve_apply_mode(apply, workspace)
-
-    p = get_dwh2_params(PAPER_MUON_ELL) if params is None else params
-    s0, s1, delta = p.step0, p.step1, p.delta
-
-    gram = workspace.gram
-    gram.copy_(gram_norm)
-    _add_adaptive_ridge_tensor_(gram, n, workspace.out_dtype)
-
-    h0, k0, m0 = _stage1_core(gram, workspace, s0, stats=None)
-    rhs_cross = _cross_term_core(h0, k0, workspace)
-    L = _stage2_core(gram, k0, rhs_cross, workspace, s0, delta, 1.0, stats=None)
-    tmp = _solve_stage2_apply(L, m0, workspace)
-
-    k_final = workspace.k_final
-    k_final.copy_(m0).mul_(s1.alpha)
-    k_final.add_(tmp, alpha=s1.beta)
-    _symmetrize_(k_final, workspace.scratch)
-
-    return _apply_k_to_input(
-        a_norm,
-        k_final,
-        workspace,
-        apply=apply_mode,
-        norm_scale=norm_scale,
-    )
-
-
-@torch.no_grad()
-def _dwh2_core_impl(
-    a_norm: torch.Tensor,
-    gram_norm: torch.Tensor,
-    *,
-    ell0: float = PAPER_MUON_ELL,
-    params: Optional[DWH2Params] = None,
-    workspace: Optional[DWH2Workspace] = None,
-    apply: str = "fp16",
-    norm_scale: Optional[torch.Tensor] = None,
-    stats: Optional[CholStats] = None,
-) -> tuple[torch.Tensor, float, float, int, list[float], list[float]]:
-    assert apply in ("fp16", "fp32", "auto")
-    n = int(min(a_norm.shape))
-    workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype)
-
-    gram = workspace.gram
-    scratch = workspace.scratch
-    k_final = workspace.k_final
-
-    current_ell0 = float(ell0)
-    theta = 1.0
-    retry_count = 0
-    max_retries = 3
-    alpha_log: list[float] = []
-    s_c_log: list[float] = []
-
-    while True:
-        p = (
-            get_dwh2_params(current_ell0)
-            if params is None or retry_count > 0
-            else params
-        )
-        s0, s1, delta = p.step0, p.step1, p.delta
-
-        gram.copy_(gram_norm)
-        _add_adaptive_ridge_tensor_(gram, n, workspace.out_dtype)
-
-        h0, k0, m0 = _stage1_core(gram, workspace, s0, stats=stats)
-        rhs_cross = _cross_term_core(h0, k0, workspace)
-        s_c = _mat_skew_rel(rhs_cross, scratch)
-
-        shifted_before = 0 if stats is None else stats.shifted_calls
-        L = _stage2_core(
-            gram,
-            k0,
-            rhs_cross,
-            workspace,
-            s0,
-            delta,
-            theta,
-            stats=stats,
-        )
-        stage2_shifted = (
-            False if stats is None else (stats.shifted_calls > shifted_before)
-        )
-        tmp = _solve_stage2_apply(L, m0, workspace)
-
-        alpha = _solve_amplification(tmp, m0)
-        solve_resid = _solve_residual_rel(workspace.buf, tmp, m0, workspace.resid)
-        alpha_log.append(alpha)
-        s_c_log.append(s_c)
-
-        need_retry = (
-            alpha > _BACKTRACK_ALPHA_LIMIT
-            or s_c > _BACKTRACK_SKEW_LIMIT
-            or solve_resid > _BACKTRACK_SOLVE_RESID_LIMIT
-            or (stage2_shifted and alpha > _BACKTRACK_SHIFTED_ALPHA_SOFT_LIMIT)
-        )
-
-        if need_retry and retry_count < max_retries:
-            if theta > 0.125:
-                theta *= 0.5
-            else:
-                theta = 1.0
-                current_ell0 *= 10.0
-            retry_count += 1
-            continue
-
-        k_final.copy_(m0).mul_(s1.alpha)
-        k_final.add_(tmp, alpha=s1.beta * theta)
-        _symmetrize_(k_final, scratch)
-        break
-
-    apply_mode = _resolve_apply_mode(apply, workspace, retries=retry_count, theta=theta)
-
-    res = _apply_k_to_input(
-        a_norm,
-        k_final,
-        workspace,
-        apply=apply_mode,
-        norm_scale=norm_scale,
-    )
-    return res, theta, current_ell0, retry_count, alpha_log, s_c_log
 
 
 @torch.no_grad()
@@ -729,7 +477,7 @@ def dwh2_core_q(
     apply: str = "fp16",
     norm_scale: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
-    return _dwh2_core_fast_impl(
+    return _dwh2_core_impl(
         a_norm,
         gram_norm,
         ell0=ell0,
@@ -737,6 +485,7 @@ def dwh2_core_q(
         workspace=workspace,
         apply=apply,
         norm_scale=norm_scale,
+        stats=None,
     )
 
 
@@ -752,7 +501,7 @@ def dwh2_core(
     norm_scale: Optional[torch.Tensor] = None,
 ) -> PolarResult:
     stats = CholStats()
-    y, theta, final_ell0, retries, a_log, s_log = _dwh2_core_impl(
+    y = _dwh2_core_impl(
         a_norm,
         gram_norm,
         ell0=ell0,
@@ -762,15 +511,7 @@ def dwh2_core(
         norm_scale=norm_scale,
         stats=stats,
     )
-    return PolarResult(
-        q=y,
-        stats=stats,
-        theta=theta,
-        ell0=final_ell0,
-        retries=retries,
-        alpha_log=a_log,
-        s_c_log=s_log,
-    )
+    return PolarResult(q=y, stats=stats)
 
 
 @torch.no_grad()

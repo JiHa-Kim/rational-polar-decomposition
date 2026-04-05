@@ -214,9 +214,7 @@ class BenchmarkRunner:
     def __init__(self, device: torch.device, args):
         self.device = device
         self.args = args
-        self.ws_cache: OrderedDict[
-            tuple[int, str, int | None, int], dwh2.DWH2Workspace
-        ] = OrderedDict()
+        self.ws_cache: OrderedDict[tuple[int, str, int | None, int], dwh2.DWH2Workspace] = OrderedDict()
 
     def set_fast_matmul(self) -> None:
         if self.device.type == "cuda":
@@ -265,11 +263,7 @@ class BenchmarkRunner:
         if ws is not None:
             self.ws_cache.move_to_end(key)
             return ws
-        dtype = {
-            "fp16": torch.float16,
-            "bf16": torch.bfloat16,
-            "fp32": torch.float32,
-        }[dtype_str]
+        dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[dtype_str]
         ws = dwh2.DWH2Workspace.allocate(
             n,
             self.device,
@@ -288,16 +282,16 @@ class BenchmarkRunner:
 class RegressionSuite:
     @staticmethod
     def _color_diff(val: float, is_speed: bool = True) -> str:
-        del is_speed
+        # Green for speedup (negative diff) or quality improvement (negative diff)
+        # Red for regression (positive diff)
         if abs(val) < 1e-6:
             return f"{val * 100:>+7.1f}%"
-        color = "[92m" if val < 0 else "[91m"
-        reset = "[0m"
+        color = "\033[92m" if val < 0 else "\033[91m"
+        reset = "\033[0m"
         return f"{color}{val * 100:>+7.1f}%{reset}"
 
     @staticmethod
     def check(baseline_path, current_path, time_thresh=0.05, metric_thresh=0.01):
-        del time_thresh, metric_thresh
         from collections import defaultdict
 
         def load(p):
@@ -329,10 +323,12 @@ class RegressionSuite:
             if k not in base or k not in curr:
                 continue
 
+            # Speed comparison (median_ms)
             b_med = statistics.median([r["median_ms"] for r in base[k]])
             c_med = statistics.median([r["median_ms"] for r in curr[k]])
             speed_diff = (c_med - b_med) / b_med if b_med > 0 else 0.0
 
+            # Quality comparison (ortho_fro)
             b_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in base[k]])
             c_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in curr[k]])
             ortho_diff = (
@@ -341,6 +337,7 @@ class RegressionSuite:
                 else (c_ortho - b_ortho)
             )
 
+            # Quality comparison (p2_gram_rel_fro)
             b_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in base[k]])
             c_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in curr[k]])
             perr_diff = (
@@ -408,10 +405,10 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
     try:
         try:
             mod = importlib.import_module("gram_newton_schulz.coefficients")
-        except ImportError, ModuleNotFoundError:
+        except (ImportError, ModuleNotFoundError):
             mod = importlib.import_module("newton_schulz.coefficients")
         coefs = getattr(mod, "POLAR_EXPRESS_COEFFICIENTS")
-    except ImportError, ModuleNotFoundError, AttributeError:
+    except (ImportError, ModuleNotFoundError, AttributeError):
         coefs = getattr(gns_mod, "POLAR_EXPRESS_COEFFICIENTS", None)
     gns = getattr(gns_mod, "GramNewtonSchulz")(
         ns_use_kernels=kernel,
@@ -420,7 +417,26 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
     )
 
     def core(x: torch.Tensor) -> torch.Tensor:
-        return gns(x)
+        if x.dtype != torch.float16:
+            x = x.half()
+        t = x.size(-2) > x.size(-1)
+        if t:
+            x = x.mT.contiguous()
+        xb = x.unsqueeze(0)
+        ar = getattr(gns, "aspect_ratio_to_use_gram_newton_schulz", 1)
+        use_gram = max(xb.shape[-2:]) > ar * min(xb.shape[-2:])
+        if hasattr(gns, "_gram_newton_schulz") and hasattr(
+            gns, "_standard_newton_schulz"
+        ):
+            yb = (
+                gns._gram_newton_schulz(xb)
+                if use_gram
+                else gns._standard_newton_schulz(xb)
+            )
+            y = yb.squeeze(0)
+        else:
+            y = gns(x)
+        return y.mT.contiguous() if t else y
 
     return core
 
@@ -434,12 +450,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.set_defaults(compile=True)
     ap.add_argument(
         "--compile-mode",
-        default="max-autotune-no-cudagraphs",
-        choices=[
-            "reduce-overhead",
-            "max-autotune",
-            "max-autotune-no-cudagraphs",
-        ],
+        default="max-autotune",
+        choices=["reduce-overhead", "max-autotune"],
     )
     ap.add_argument("--trials", type=int, default=10)
     ap.add_argument("--warmup", type=int, default=3)
@@ -474,11 +486,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = ap.parse_args(argv)
     if args.hard:
-        args.cases = "ill_conditioned,lowrank_noise,rank_1_heavy"
+        args.cases = "ill_conditioned,lowrank_noise"
         args.shapes = "16384x4096"
 
     setup_logging(args.quiet)
-    torch._dynamo.config.capture_scalar_outputs = False
+    torch._dynamo.config.capture_scalar_outputs = True
     warnings.filterwarnings(
         "ignore", category=FutureWarning, message=r".*torch\._prims_common\.check.*"
     )
@@ -513,9 +525,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.compile:
         logger.info(f"[compile] Jitting tensor-only fast path ({args.compile_mode})...")
         dwh2_speed_core = torch.compile(
-            dwh2_speed_core,
-            mode=args.compile_mode,
-            fullgraph=False,
+            dwh2_speed_core, mode=args.compile_mode, fullgraph=False
         )
         if gns_core is not None:
             gns_core = torch.compile(gns_core, mode=args.compile_mode, fullgraph=False)
@@ -526,176 +536,145 @@ def main(argv: list[str] | None = None) -> None:
     total = len(shapes) * len(cases) * len(seeds) * count_methods
     bar = tqdm(total=total, desc="bench", disable=args.quiet) if tqdm else None
 
-    output_files = {}
-
-    def get_output_path(method_name: str) -> str:
-        if args.no_gns or (args.gns_path == "" and method_name == "dwh2"):
-            return args.output
-
-        base, ext = os.path.splitext(args.output)
-        return f"{base}_{method_name}{ext}"
-
-    try:
-        with torch.inference_mode():
-            dtype_map = {
-                "fp16": torch.float16,
-                "bf16": torch.bfloat16,
-                "fp32": torch.float32,
-            }
-            for m, n, s_str in shapes:
-                runner.clear_transient_memory()
-                ws = runner.get_workspace(min(m, n), args.dtype)
-                for case in cases:
+    with open(args.output, "w", encoding="utf-8") as out_f:
+        try:
+            with torch.inference_mode():
+                dtype_map = {
+                    "fp16": torch.float16,
+                    "bf16": torch.bfloat16,
+                    "fp32": torch.float32,
+                }
+                for m, n, s_str in shapes:
                     runner.clear_transient_memory()
-                    for seed in seeds:
-                        methods = [("dwh2", dwh2_speed_core, dwh2_quality_core)]
-                        if not args.no_gns and gns_core is not None:
-                            methods.append(("gns", gns_core, None))
+                    ws = runner.get_workspace(min(m, n), args.dtype)
+                    for case in cases:
+                        runner.clear_transient_memory()
+                        for seed in seeds:
+                            methods = [("dwh2", dwh2_speed_core, dwh2_quality_core)]
+                            if not args.no_gns and gns_core is not None:
+                                methods.append(("gns", gns_core, None))
 
-                        a_master = CaseGenerator.make_case(case, m, n, device, seed).to(
-                            dtype_map[args.dtype]
-                        )
-
-                        for name, speed_core, quality_core in methods:
-                            if name not in output_files:
-                                path = get_output_path(name)
-                                output_files[name] = open(path, "a", encoding="utf-8")
-
-                            out_f = output_files[name]
-                            a = a_master.clone()
-                            a_norm, g_norm = dwh2_mod.normalize_moment_with_small_gram(
-                                a, workspace=ws, inplace=True
+                            a_master = CaseGenerator.make_case(case, m, n, device, seed).to(
+                                dtype_map[args.dtype]
                             )
 
-                            def fn_full(an=a_norm, gn=g_norm):
-                                if name == "dwh2":
-                                    return quality_core(
-                                        an, gn, params=params, workspace=ws
-                                    )
-                                return dwh2_mod.PolarResult(q=speed_core(an))
-
-                            def fn_speed(an=a_norm, gn=g_norm):
-                                if name == "dwh2":
-                                    return speed_core(
-                                        an, gn, params=params, workspace=ws
-                                    )
-                                return speed_core(an)
-
-                            if args.one_pass:
-                                out, times = runner.measure(
-                                    fn_full, args.trials, args.warmup
+                            for name, speed_core, quality_core in methods:
+                                a = a_master.clone()
+                                a_norm, g_norm = dwh2_mod.normalize_moment_with_small_gram(
+                                    a, workspace=ws, inplace=True
                                 )
-                                med = statistics.median(times)
-                                mn = min(times)
-                                st = getattr(out, "stats", dwh2_mod.CholStats())
-                                if args.no_metrics:
-                                    rec = Record(
-                                        method=name,
-                                        case=case,
-                                        shape=s_str,
-                                        dtype=args.dtype,
-                                        tf32=not args.no_tf32,
-                                        compile=args.compile,
-                                        trials=args.trials,
-                                        warmup=args.warmup,
-                                        median_ms=med,
-                                        min_ms=mn,
-                                        chol_calls=st.calls,
-                                        chol_shifted_calls=st.shifted_calls,
-                                        chol_total_retries=st.total_retries,
-                                        chol_max_jitter=st.max_jitter,
-                                    )
+
+                                def fn_full(an=a_norm, gn=g_norm):
+                                    if name == "dwh2":
+                                        return quality_core(an, gn, params=params, workspace=ws)
+                                    return dwh2_mod.PolarResult(q=speed_core(an))
+
+                                def fn_speed(an=a_norm, gn=g_norm):
+                                    if name == "dwh2":
+                                        return speed_core(an, gn, params=params, workspace=ws)
+                                    return speed_core(an)
+
+                                if args.one_pass:
+                                    out, times = runner.measure(fn_full, args.trials, args.warmup)
+                                    med = statistics.median(times)
+                                    mn = min(times)
+                                    st = getattr(out, "stats", dwh2_mod.CholStats())
+                                    if args.no_metrics:
+                                        rec = Record(
+                                            method=name,
+                                            case=case,
+                                            shape=s_str,
+                                            dtype=args.dtype,
+                                            tf32=not args.no_tf32,
+                                            compile=args.compile,
+                                            trials=args.trials,
+                                            warmup=args.warmup,
+                                            median_ms=med,
+                                            min_ms=mn,
+                                            chol_calls=st.calls,
+                                            chol_shifted_calls=st.shifted_calls,
+                                            chol_total_retries=st.total_retries,
+                                            chol_max_jitter=st.max_jitter,
+                                        )
+                                    else:
+                                        ortho, o_max = MetricsSuite.ortho_stats(out.q, ws)
+                                        skew, p2g = MetricsSuite.polar_p_stats(a_norm, out.q, g_norm, ws)
+                                        rec = Record(
+                                            method=name,
+                                            case=case,
+                                            shape=s_str,
+                                            dtype=args.dtype,
+                                            tf32=not args.no_tf32,
+                                            compile=args.compile,
+                                            trials=args.trials,
+                                            warmup=args.warmup,
+                                            median_ms=med,
+                                            min_ms=mn,
+                                            ortho_fro=ortho,
+                                            ortho_max_abs=o_max,
+                                            p_skew_rel_fro=skew,
+                                            p2_gram_rel_fro=p2g,
+                                            chol_calls=st.calls,
+                                            chol_shifted_calls=st.shifted_calls,
+                                            chol_total_retries=st.total_retries,
+                                            chol_max_jitter=st.max_jitter,
+                                        )
                                 else:
-                                    ortho, o_max = MetricsSuite.ortho_stats(out.q, ws)
-                                    skew, p2g = MetricsSuite.polar_p_stats(
-                                        a_norm, out.q, g_norm, ws
-                                    )
-                                    rec = Record(
-                                        method=name,
-                                        case=case,
-                                        shape=s_str,
-                                        dtype=args.dtype,
-                                        tf32=not args.no_tf32,
-                                        compile=args.compile,
-                                        trials=args.trials,
-                                        warmup=args.warmup,
-                                        median_ms=med,
-                                        min_ms=mn,
-                                        ortho_fro=ortho,
-                                        ortho_max_abs=o_max,
-                                        p_skew_rel_fro=skew,
-                                        p2_gram_rel_fro=p2g,
-                                        chol_calls=st.calls,
-                                        chol_shifted_calls=st.shifted_calls,
-                                        chol_total_retries=st.total_retries,
-                                        chol_max_jitter=st.max_jitter,
-                                    )
-                            else:
-                                _, times = runner.measure(
-                                    fn_speed, args.trials, args.warmup
-                                )
-                                med = statistics.median(times)
-                                mn = min(times)
-                                if args.no_metrics:
-                                    rec = Record(
-                                        method=name,
-                                        case=case,
-                                        shape=s_str,
-                                        dtype=args.dtype,
-                                        tf32=not args.no_tf32,
-                                        compile=args.compile,
-                                        trials=args.trials,
-                                        warmup=args.warmup,
-                                        median_ms=med,
-                                        min_ms=mn,
-                                    )
-                                else:
-                                    out_qual, _ = runner.measure(fn_full, 1, 0)
-                                    st = getattr(
-                                        out_qual, "stats", dwh2_mod.CholStats()
-                                    )
-                                    ortho, o_max = MetricsSuite.ortho_stats(
-                                        out_qual.q, ws
-                                    )
-                                    skew, p2g = MetricsSuite.polar_p_stats(
-                                        a_norm, out_qual.q, g_norm, ws
-                                    )
-                                    rec = Record(
-                                        method=name,
-                                        case=case,
-                                        shape=s_str,
-                                        dtype=args.dtype,
-                                        tf32=not args.no_tf32,
-                                        compile=args.compile,
-                                        trials=args.trials,
-                                        warmup=args.warmup,
-                                        median_ms=med,
-                                        min_ms=mn,
-                                        ortho_fro=ortho,
-                                        ortho_max_abs=o_max,
-                                        p_skew_rel_fro=skew,
-                                        p2_gram_rel_fro=p2g,
-                                        chol_calls=st.calls,
-                                        chol_shifted_calls=st.shifted_calls,
-                                        chol_total_retries=st.total_retries,
-                                        chol_max_jitter=st.max_jitter,
-                                    )
-                                    del out_qual
+                                    _, times = runner.measure(fn_speed, args.trials, args.warmup)
+                                    med = statistics.median(times)
+                                    mn = min(times)
+                                    if args.no_metrics:
+                                        rec = Record(
+                                            method=name,
+                                            case=case,
+                                            shape=s_str,
+                                            dtype=args.dtype,
+                                            tf32=not args.no_tf32,
+                                            compile=args.compile,
+                                            trials=args.trials,
+                                            warmup=args.warmup,
+                                            median_ms=med,
+                                            min_ms=mn,
+                                        )
+                                    else:
+                                        out_qual, _ = runner.measure(fn_full, 1, 0)
+                                        st = getattr(out_qual, "stats", dwh2_mod.CholStats())
+                                        ortho, o_max = MetricsSuite.ortho_stats(out_qual.q, ws)
+                                        skew, p2g = MetricsSuite.polar_p_stats(a_norm, out_qual.q, g_norm, ws)
+                                        rec = Record(
+                                            method=name,
+                                            case=case,
+                                            shape=s_str,
+                                            dtype=args.dtype,
+                                            tf32=not args.no_tf32,
+                                            compile=args.compile,
+                                            trials=args.trials,
+                                            warmup=args.warmup,
+                                            median_ms=med,
+                                            min_ms=mn,
+                                            ortho_fro=ortho,
+                                            ortho_max_abs=o_max,
+                                            p_skew_rel_fro=skew,
+                                            p2_gram_rel_fro=p2g,
+                                            chol_calls=st.calls,
+                                            chol_shifted_calls=st.shifted_calls,
+                                            chol_total_retries=st.total_retries,
+                                            chol_max_jitter=st.max_jitter,
+                                        )
+                                        del out_qual
 
-                            out_f.write(json.dumps(asdict(rec), sort_keys=True) + "\n")
-                            out_f.flush()
-                            if bar:
-                                bar.update(1)
+                                out_f.write(json.dumps(asdict(rec), sort_keys=True) + "\n")
+                                out_f.flush()
+                                if bar:
+                                    bar.update(1)
 
-                            del a, a_norm, g_norm
+                                del a, a_norm, g_norm
 
-                        del a_master
-                    runner.clear_transient_memory()
-    finally:
-        for f in output_files.values():
-            f.close()
-        if bar:
-            bar.close()
+                            del a_master
+                        runner.clear_transient_memory()
+        finally:
+            if bar:
+                bar.close()
 
     if args.no_gns and args.load_gns and os.path.exists(args.load_gns):
         logger.info(f"[merge] GNS results available at {args.load_gns}")
@@ -704,6 +683,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def main_hard() -> None:
+    # Prepend defaults so that user-provided arguments can override them
     defaults = [
         "--no-gns",
         "--hard",

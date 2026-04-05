@@ -163,7 +163,7 @@ class MetricsSuite:
         H = workspace.buf
         xbuf = workspace.xbuf
         scratch = workspace.scratch
-        tmp = workspace.h0
+        tmp = workspace.tmp
         qbuf = cls._get_metric_qbuf(workspace)
 
         S.zero_()
@@ -191,7 +191,7 @@ class MetricsSuite:
         )
         e_supp = float((e_supp_num / e_supp_den).item())
 
-        P = workspace.m0
+        P = workspace.rhs
         P.copy_(H.mT).add_(H).mul_(0.5)
 
         skew = scratch.copy_(H).sub_(P)

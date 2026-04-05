@@ -1,5 +1,4 @@
 import json
-import statistics
 import argparse
 import math
 from collections import defaultdict
@@ -47,7 +46,7 @@ def _generate_table(metrics, d_by_case, g_by_case, all_cases):
                     ds = f"**{ds}**"
                 elif gv < dv:
                     gs = f"**{gs}**"
-            
+
             d_row.append(ds)
             g_row.append(gs)
 
@@ -70,7 +69,7 @@ def format_markdown_table(dwh2_path, gns_path):
         ("P2-Err", "p2_gram_rel_fro", ".2e"),
         ("Rec", "rec_resid", ".2e"),
     ]
-    
+
     skew_metrics = [
         ("Skew", "p_skew_rel_fro", ".2e"),
     ]

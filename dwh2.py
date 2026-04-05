@@ -459,7 +459,6 @@ def _dwh2_core_impl(
     tmp = workspace.tmp
     rhs = workspace.rhs
     k_final = workspace.k_final
-    linv = workspace.linv
     sh = workspace.sh
     invsh = workspace.invsh
     L = workspace.L
@@ -488,12 +487,12 @@ def _dwh2_core_impl(
 
     tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
     scratch.copy_(k0).mul_(sh[:, None])
-    torch.mm(tmp, scratch, out=rhs)
-    rhs.mul_(sh[:, None])
+    torch.mm(tmp, scratch, out=L)
+    L.mul_(sh[:, None])
 
     buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
     buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
-    buf.add_(rhs, alpha=delta * (s0.beta * s0.beta))
+    buf.add_(L, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 

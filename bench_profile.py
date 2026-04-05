@@ -354,9 +354,52 @@ class RegressionSuite:
 
     @staticmethod
     def summarize(path, baseline=None):
-        if baseline and os.path.exists(baseline):
-            RegressionSuite.check(baseline, path)
-            return
+        if baseline:
+            # Check if baseline is a git revision
+            import subprocess
+            is_rev = False
+            try:
+                subprocess.run(["git", "rev-parse", "--verify", baseline], 
+                               capture_output=True, check=True)
+                is_rev = True
+            except Exception:
+                pass
+            
+            if is_rev:
+                print(f"--- Benchmarking baseline revision: {baseline} ---")
+                # 1. Save current dwh2.py
+                with open("dwh2.py", "r") as f:
+                    current_code = f.read()
+                
+                baseline_json = f"baseline_{baseline}.jsonl"
+                try:
+                    # 2. Checkout revision
+                    subprocess.run(["git", "checkout", baseline, "--", "dwh2.py"], check=True)
+                    
+                    # 3. Run benchmark for baseline
+                    # We use a sub-process to avoid module caching issues
+                    import sys
+                    cmd = [sys.executable, "bench_profile.py", "--output", baseline_json, "--no-metrics", "--quiet"]
+                    # Forward relevant args (this is a bit simplified)
+                    for arg in sys.argv[1:]:
+                        if arg not in ["--baseline", baseline, "--output"]:
+                            cmd.append(arg)
+                    if "--no-gns" not in cmd: cmd.append("--no-gns")
+                    
+                    subprocess.run(cmd, check=True)
+                    
+                    # 4. Compare
+                    RegressionSuite.check(baseline_json, path)
+                    return
+                finally:
+                    # 5. Restore current code
+                    with open("dwh2.py", "w") as f:
+                        f.write(current_code)
+                    if os.path.exists(baseline_json):
+                        os.remove(baseline_json)
+            elif os.path.exists(baseline):
+                RegressionSuite.check(baseline, path)
+                return
 
         from collections import defaultdict
 
@@ -473,7 +516,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--no-metrics", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--ws-cache-max", type=int, default=1)
-    ap.add_argument("--gram-block-rows", type=int, default=dwh2.GRAM_BLOCK_ROWS)
+    ap.add_argument("--gram-block-rows", type=int, default=dwh2.DEFAULT_CONFIG.gram_block_rows)
     ap.add_argument("--gns-path", default="")
     ap.add_argument("--gns-use-kernels", action="store_true")
     ap.add_argument("--gns-reset-iters", default="2")
@@ -530,7 +573,7 @@ def main(argv: list[str] | None = None) -> None:
         if gns_core is not None:
             gns_core = torch.compile(gns_core, mode=args.compile_mode, fullgraph=False)
 
-    params = dwh2_mod.get_dwh2_params(dwh2_mod.PAPER_MUON_ELL)
+    params = dwh2_mod.get_dwh2_params(dwh2_mod.DEFAULT_CONFIG.ell0)
 
     count_methods = 1 if args.no_gns else 2
     total = len(shapes) * len(cases) * len(seeds) * count_methods

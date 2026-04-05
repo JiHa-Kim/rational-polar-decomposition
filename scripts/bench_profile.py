@@ -57,7 +57,6 @@ class Record:
     compile: bool
     trials: int
     warmup: int
-    compare_mode: str = "end_to_end"
     gns_entrypoint: str = "top_level"
     gns_use_kernels: bool = False
     gns_force_fp16: bool = False
@@ -85,12 +84,10 @@ class BenchmarkRunner:
         import torch
 
         if self.device.type == "cuda":
-            torch.backends.cuda.matmul.allow_tf32 = not self.args.no_tf32
-            torch.backends.cudnn.allow_tf32 = not self.args.no_tf32
+            torch.backends.cuda.matmul.allow_tf32 = self.args.tf32
+            torch.backends.cudnn.allow_tf32 = self.args.tf32
             torch.backends.cudnn.benchmark = True
-        torch.set_float32_matmul_precision(
-            "high" if not self.args.no_tf32 else "highest"
-        )
+        torch.set_float32_matmul_precision("high" if self.args.tf32 else "highest")
 
     def clear_transient_memory(self) -> None:
         import torch
@@ -297,9 +294,6 @@ class RegressionSuite:
                 args.shapes,
                 "--gram-block-rows",
                 str(args.gram_block_rows),
-                "--compare-mode",
-                args.compare_mode,
-                "--gns-reset-iters",
                 args.gns_reset_iters,
                 "--compile" if args.compile else "--no-compile",
                 "--tf32" if args.tf32 else "--no-tf32",
@@ -463,12 +457,12 @@ def parse_shapes(raw: str) -> list[tuple[int, int, str]]:
     return shapes
 
 
-def method_specs(args, dwh2_speed_core, dwh2_quality_core, gns_core):
+def method_specs(args, dwh2_full_pipeline, gns_full_pipeline):
     methods = []
-    if not args.no_dwh2:
-        methods.append(("dwh2", dwh2_speed_core, dwh2_quality_core))
-    if not args.no_gns and gns_core is not None:
-        methods.append(("gns", gns_core, None))
+    if args.dwh2:
+        methods.append(("dwh2", dwh2_full_pipeline))
+    if args.gns and gns_full_pipeline is not None:
+        methods.append(("gns", gns_full_pipeline))
     return methods
 
 
@@ -492,7 +486,6 @@ def make_record(
         compile=args.compile,
         trials=args.trials,
         warmup=args.warmup,
-        compare_mode=args.compare_mode,
         gns_entrypoint=args.gns_entrypoint,
         gns_use_kernels=bool(args.gns_use_kernels),
         median_ms=median_ms,
@@ -517,14 +510,6 @@ def median_and_min(times: list[float], no_time: bool) -> tuple[float, float]:
     return statistics.median(times), min(times)
 
 
-def make_metric_reference(dwh2_mod, ws, a_master):
-    a_ref = a_master.clone()
-    a_norm, g_norm = dwh2_mod.normalize_moment_with_small_gram(
-        a_ref, workspace=ws, inplace=True
-    )
-    return a_norm, g_norm
-
-
 def benchmark_method(
     *,
     args,
@@ -533,56 +518,50 @@ def benchmark_method(
     params,
     ws,
     name: str,
-    speed_core,
-    quality_core,
+    full_pipeline,
     case: str,
     shape: str,
     a_master,
 ):
-    a_norm_ref, g_norm_ref = make_metric_reference(dwh2_mod, ws, a_master)
+    # Setup inputs OUTSIDE the timed function as much as possible,
+    # though we must clone in fn() if the algorithm is in-place.
+    # dwh2_end_to_end is not in-place, but GNS runner might be.
 
-    if args.compare_mode == "shared_normalized":
-        timed_input = a_norm_ref
+    def fn_full():
+        # NOTE: If we want "Full Algorithm" including normalization,
+        # we must clone inside fn() to avoid modifying a_master across trials
+        # if the implementation is in-place.
+        a = a_master.clone()
+        if name == "dwh2":
+            return full_pipeline(a, workspace=ws, apply="fp16")
+        return dwh2_mod.PolarResult(q=full_pipeline(a))
 
-        def fn_full(an=timed_input, gn=g_norm_ref):
-            if name == "dwh2":
-                return quality_core(an, gn, params=params, workspace=ws)
-            return dwh2_mod.PolarResult(q=speed_core(an))
-
-        def fn_speed(an=timed_input, gn=g_norm_ref):
-            if name == "dwh2":
-                return speed_core(an, gn, params=params, workspace=ws)
-            return speed_core(an)
-
-    elif args.compare_mode == "end_to_end":
-        timed_input = a_master.clone()
-
-        def fn_full(a=timed_input):
-            if name == "dwh2":
-                return dwh2_mod.dwh2_end_to_end(a, workspace=ws, apply="fp16")
-            return dwh2_mod.PolarResult(q=speed_core(a))
-
-        def fn_speed(a=timed_input):
-            if name == "dwh2":
-                return dwh2_mod.dwh2_end_to_end(a, workspace=ws, apply="fp16").q
-            return speed_core(a)
-
-    else:
-        raise ValueError(f"Unknown compare mode: {args.compare_mode}")
+    def fn_speed():
+        # GNS modifies `a` in-place due to our wrapper, but DWH2 does not.
+        if name == "dwh2":
+            return full_pipeline(a_master, workspace=ws, apply="fp16").q
+        a = a_master.clone()
+        return full_pipeline(a)
 
     if args.one_pass:
         out, (med, mn) = (
             (fn_full(), (float("nan"), float("nan")))
-            if args.time
+            if not args.time
             else runner.measure(fn_full, args.trials, args.warmup)
         )
-        if not args.time:
+        if args.time:
             med, mn = median_and_min(mn, False)
 
         chol_stats = getattr(out, "stats", dwh2_mod.CholStats())
+        # Metric reference for consistency
+        a_ref = a_master.clone()
+        a_norm_ref, g_norm_ref = dwh2_mod.normalize_moment_with_small_gram(
+            a_ref, workspace=ws, inplace=True
+        )
+
         metrics = (
             None
-            if args.no_metrics
+            if not args.metrics
             else MetricsSuite.all_stats(a_norm_ref, out.q, g_norm_ref, ws)
         )
         record = make_record(
@@ -604,6 +583,11 @@ def benchmark_method(
         if not args.metrics:
             record = make_record(args, name, case, shape, med, mn)
         else:
+            # For metrics, we need the result from a_norm_ref for direct comparison
+            a_ref = a_master.clone()
+            a_norm_ref, g_norm_ref = dwh2_mod.normalize_moment_with_small_gram(
+                a_ref, workspace=ws, inplace=True
+            )
             out, _ = runner.measure(fn_full, 1, 0)
             record = make_record(
                 args,
@@ -616,7 +600,6 @@ def benchmark_method(
                 chol_stats=getattr(out, "stats", dwh2_mod.CholStats()),
             )
 
-    del a_norm_ref, g_norm_ref
     return record
 
 
@@ -661,17 +644,34 @@ def write_records(args) -> None:
             logger.warning("[warn] Could not import Gram-Newton-Schulz baseline.")
 
     dwh2_mod = importlib.reload(dwh2)
-    dwh2_speed_core = dwh2_mod.dwh2_core_q
-    dwh2_quality_core = dwh2_mod.dwh2_core
+    dwh2_full_pipeline = dwh2_mod.dwh2_end_to_end
+
+    # Create GNS full algorithm wrapper
+    gns_full_pipeline = None
+    if gns_core is not None:
+
+        def _gns_full(a, workspace=None):
+            # Fair comparison: use the same normalization
+            an, _ = dwh2_mod.normalize_moment_with_small_gram(
+                a, workspace=workspace, inplace=True
+            )
+            return gns_core(an)
+
+        gns_full_pipeline = _gns_full
+
     if args.compile:
         logger.info(f"[compile] Jitting selected fast paths ({args.compile_mode})...")
-        dwh2_speed_core = torch.compile(
-            dwh2_speed_core,
+        dwh2_full_pipeline = torch.compile(
+            dwh2_full_pipeline,
             mode=args.compile_mode,
             fullgraph=False,
         )
-        if gns_core is not None:
-            gns_core = torch.compile(gns_core, mode=args.compile_mode, fullgraph=False)
+        if gns_full_pipeline is not None:
+            gns_full_pipeline = torch.compile(
+                gns_full_pipeline,
+                mode=args.compile_mode,
+                fullgraph=False,
+            )
 
     ell0 = getattr(
         getattr(dwh2_mod, "DEFAULT_CONFIG", None),
@@ -680,7 +680,7 @@ def write_records(args) -> None:
     )
     params = dwh2_mod.get_dwh2_params(ell0)
 
-    methods = method_specs(args, dwh2_speed_core, dwh2_quality_core, gns_core)
+    methods = method_specs(args, dwh2_full_pipeline, gns_full_pipeline)
     total = len(shapes) * len(cases) * len(seeds) * len(methods)
     bar = tqdm(total=total, desc="bench", disable=args.quiet) if tqdm else None
 
@@ -696,7 +696,7 @@ def write_records(args) -> None:
                             a_master = CaseGenerator.make_case(
                                 case, m, n, device, seed
                             ).to(DTYPE_MAP[args.dtype])
-                            for name, speed_core, quality_core in methods:
+                            for name, full_pipeline in methods:
                                 record = benchmark_method(
                                     args=args,
                                     runner=runner,
@@ -704,8 +704,7 @@ def write_records(args) -> None:
                                     params=params,
                                     ws=ws,
                                     name=name,
-                                    speed_core=speed_core,
-                                    quality_core=quality_core,
+                                    full_pipeline=full_pipeline,
                                     case=case,
                                     shape=shape_str,
                                     a_master=a_master,
@@ -729,9 +728,7 @@ def write_records(args) -> None:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda")
-    parser.add_argument(
-        "--tf32", action=argparse.BooleanOptionalAction, default=True
-    )
+    parser.add_argument("--tf32", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
         "--compile", action=argparse.BooleanOptionalAction, default=True
     )
@@ -762,12 +759,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ws-cache-max", type=int, default=1)
     parser.add_argument("--gram-block-rows", type=int, default=1024)
-    parser.add_argument(
-        "--compare-mode",
-        default="end_to_end",
-        choices=["end_to_end", "shared_normalized"],
-        help="end_to_end is the fairest baseline comparison; shared_normalized isolates the core only.",
-    )
     parser.add_argument("--gns-path", default="")
     parser.add_argument(
         "--gns-entrypoint",
@@ -782,12 +773,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Enable upstream optional GNS kernels (requires quack-kernels).",
     )
     parser.add_argument("--gns-reset-iters", default="2")
-    parser.add_argument(
-        "--gns", action=argparse.BooleanOptionalAction, default=True
-    )
-    parser.add_argument(
-        "--dwh2", action=argparse.BooleanOptionalAction, default=True
-    )
+    parser.add_argument("--gns", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dwh2", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--load-gns", type=str, default="stable/gns_baseline.jsonl")
     return parser
 

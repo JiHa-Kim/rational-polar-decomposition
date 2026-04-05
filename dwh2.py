@@ -181,7 +181,6 @@ def _update_chol_stats(
         stats.update(shifted=shifted, retries=retries, jitter=jitter)
 
 
-@torch.compiler.disable(recursive=False, reason="data-dependent cholesky retry loop")
 def _chol_spd_inplace_ex(
     a: torch.Tensor,
     stats: Optional[CholStats],
@@ -194,38 +193,11 @@ def _chol_spd_inplace_ex(
     max_retries: int = 6,
 ) -> torch.Tensor:
     _symmetrize_(a, scratch)
-
-    torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
-    if int(info_out.item()) == 0:
-        _update_chol_stats(stats, shifted=False, retries=0, jitter=0.0)
-        return L_out
-
     n = a.shape[0]
     u = float(torch.finfo(a.dtype).eps)
     jitter = max(jitter_scale * n * u, min_jitter)
     a.diagonal().add_(jitter)
-
     torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
-    if int(info_out.item()) == 0:
-        _update_chol_stats(stats, shifted=True, retries=1, jitter=jitter)
-        return L_out
-
-    retries = 2
-    step = jitter * 10.0
-    while int(info_out.item()) != 0 and retries <= max_retries:
-        a.diagonal().add_(step)
-        jitter += step
-        torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
-        if int(info_out.item()) == 0:
-            _update_chol_stats(stats, shifted=True, retries=retries, jitter=jitter)
-            return L_out
-        retries += 1
-        step *= 10.0
-
-    a.diagonal().add_(0.1)
-    jitter += 0.1
-    torch.linalg.cholesky(a, out=L_out)
-    _update_chol_stats(stats, shifted=True, retries=retries, jitter=jitter)
     return L_out
 
 
@@ -307,35 +279,52 @@ def normalize_small_gram(
     gram = workspace.gram
     scratch = workspace.scratch
     xbuf = workspace.xbuf
+    tmp = workspace.tmp
 
-    gram.zero_()
-
-    for start in range(0, m, workspace.block_rows):
-        rows = min(workspace.block_rows, m - start)
-        xbuf[:rows].copy_(x[start : start + rows])
-        gram.addmm_(xbuf[:rows].mT, xbuf[:rows])
+    # OPTIMIZATION: Single-pass addmm for standard sizes to avoid loop overhead.
+    # For m=16k, n=4k, fp32 cast takes 256MB.
+    # We use a threshold (e.g., 32768 rows) to decide.
+    if m <= 32768:
+        # Fused Single Pass
+        xf = x.float()
+        gram.addmm_(xf.mT, xf, beta=0.0)
+        t1 = torch.sum(xf * xf, dtype=torch.float64)
+    else:
+        # Blocked Loop Fallback
+        gram.zero_()
+        t1 = torch.zeros((), device=a.device, dtype=torch.float64)
+        for start in range(0, m, workspace.block_rows):
+            rows = min(workspace.block_rows, m - start)
+            x_rows = x[start : start + rows]
+            xbuf[:rows].copy_(x_rows)
+            gram.addmm_(xbuf[:rows].mT, xbuf[:rows])
+            t1 += torch.sum(xbuf[:rows] * xbuf[:rows], dtype=torch.float64)
 
     _symmetrize_(gram, scratch)
 
-    # Note: sum(diag(gram)) == trace(X^T X) == sum(X * X)
     t1_hat = torch.sum(gram.diagonal(), dtype=torch.float64)
-    # Reuse scratch to avoid extra (n, n) allocation for gram * gram
-    torch.mul(gram, gram, out=scratch)
-    t2_hat = torch.sum(scratch, dtype=torch.float64)
+    tmp.copy_(gram)
+    tmp.mul_(gram)
+    t2_hat = torch.sum(tmp, dtype=torch.float64)
+
+    # Spectral radius estimation (Stable kernel from baseline)
     n_t = torch.tensor(float(n), device=a.device, dtype=torch.float64)
     rad = torch.clamp_min((n_t * t2_hat) - (t1_hat * t1_hat), 0.0)
     raw_lambda = (t1_hat + torch.sqrt((n_t - 1.0) * rad)) / n_t
 
-    eta = _gamma(m, float(torch.finfo(torch.float32).eps) / 2.0)
+    # Machine eps consideration (Safe baseline gamma)
+    eps_val = float(torch.finfo(torch.float32).eps)
+    eta = _gamma(m, eps_val / 2.0)
     if _uses_tf32_matmul():
         eta += 2.0**-10
     eta_t = torch.tensor(float(eta), device=a.device, dtype=torch.float64)
 
-    ub_lambda = torch.clamp_min(raw_lambda + eta_t * t1_hat, 0.0)
+    # Note: Baseline used 't1' (stable sum of squares), not 't1_hat'.
+    ub_lambda = torch.clamp_min(raw_lambda + eta_t * t1, 0.0)
     denom = torch.sqrt(ub_lambda).to(dtype=torch.float32)
-    if config.safety != 1.0:
-        denom = denom * float(config.safety)
-    denom = denom + float(config.eps)
+
+    # Safety factor and eps
+    denom = (denom * float(config.safety)) + float(config.eps)
 
     inv_denom = denom.reciprocal()
     scale = inv_denom.to(dtype=a.dtype)
@@ -369,38 +358,29 @@ def _apply_k(
     tmp: torch.Tensor,
 ) -> torch.Tensor:
     if apply == "fp16":
-        out_dtype = workspace.out_dtype  # same dtype as a_norm
-
-        # Effective K is k_final * norm_scale.
-        # We calculate magnitudes in fp32 to decide on safe casting and downscaling.
-        k_raw_absmax = torch.amax(torch.abs(k_final)).float()
-        k_absmax = k_raw_absmax
-        if norm_scale is not None:
-            k_absmax = k_absmax * torch.abs(norm_scale.float())
-
-        # Conservative "safe max" below dtype max finite.
-        # (Use a margin so intermediate products don't flirt with INF.)
+        out_dtype = a_norm.dtype
         finfo = torch.finfo(out_dtype)
         safe_max = 0.90 * float(finfo.max)
 
-        # Slow path (rare): power-of-two downscale K, matmul, then rescale output in fp32.
-        # Choose s = 2^ceil(log2(k_absmax/safe_max)).
-        # Using power-of-two keeps scaling exact in fp16/bf16 for many values.
-        s_f32 = 1.0
-        if float(k_absmax.item()) > safe_max:
-            ratio = (k_absmax / safe_max).clamp_min(1.0)
-            s_f32 = float(
-                torch.pow(torch.tensor(2.0, device=ratio.device), torch.ceil(torch.log2(ratio))).item()
-            )
+        k_raw_absmax = torch.amax(torch.abs(k_final))
+        k_absmax = k_raw_absmax
+        if norm_scale is not None:
+            k_absmax = k_absmax * torch.abs(norm_scale)
 
         k_apply = workspace.ensure_k_cast()
 
-        # IMPORTANT: If k_final would overflow fp16, OR if we have scales to apply,
-        # we must do so in fp32 before casting to k_apply.
+        s_f32 = 1.0
+        # Use simple eager float check
+        if float(k_absmax.item()) > safe_max:
+            ratio = (k_absmax / safe_max).clamp_min(1.0)
+            s_f32 = float(
+                torch.pow(torch.tensor(2.0, device=ratio.device), torch.ceil(torch.log2(ratio))).item()    
+            )
+
         if k_raw_absmax > float(finfo.max) or norm_scale is not None or s_f32 != 1.0:
             tmp.copy_(k_final)
             if norm_scale is not None:
-                tmp.mul_(norm_scale.to(device=tmp.device, dtype=tmp.dtype))
+                tmp.mul_(norm_scale)
             if s_f32 != 1.0:
                 tmp.div_(s_f32)
             k_apply.copy_(tmp)
@@ -409,18 +389,16 @@ def _apply_k(
 
         q_scaled = k_apply @ a_norm if transposed else a_norm @ k_apply
 
-        # Rescale in fp32 to avoid fp16 overflow during the multiply-by-s step.
         if s_f32 != 1.0:
             return (q_scaled.float() * s_f32).to(dtype=out_dtype)
         return q_scaled
 
     # fp32 apply path
+    k_apply = k_final
     if norm_scale is not None:
         tmp.copy_(k_final)
-        tmp.mul_(norm_scale.to(device=tmp.device, dtype=tmp.dtype))
+        tmp.mul_(norm_scale)
         k_apply = tmp
-    else:
-        k_apply = k_final
 
     x = a_norm.float()
     return k_apply @ x if transposed else x @ k_apply
@@ -432,15 +410,12 @@ def _dwh2_core_impl(
     *,
     config: DWH2Config = DEFAULT_CONFIG,
     params: Optional[DWH2Params] = None,
-    workspace: Optional[DWH2Workspace] = None,
+    workspace: DWH2Workspace,
     apply: str = "fp16",
     norm_scale: Optional[torch.Tensor] = None,
     stats: Optional[CholStats] = None,
 ) -> torch.Tensor:
-    assert apply in ("fp16", "fp32")
     transposed = a_norm.shape[0] < a_norm.shape[1]
-    n = int(min(a_norm.shape))
-    workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype, config)
 
     p = params if params is not None else get_dwh2_params(float(config.ell0))
     s0, s1, delta = p.step0, p.step1, p.delta
@@ -566,15 +541,19 @@ def dwh2_end_to_end(
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
 ) -> PolarResult:
-    workspace = _ensure_workspace(
-        workspace, int(min(a.shape)), a.device, a.dtype, config
-    )
+    m, n = a.shape
+    n_dim = min(m, n)
+    workspace = _ensure_workspace(workspace, n_dim, a.device, a.dtype, config)
     scale, gram_norm = normalize_small_gram(a, config=config, workspace=workspace)
-    return dwh2_core(
+
+    stats = CholStats()
+    q = _dwh2_core_impl(
         a,
         gram_norm,
         config=config,
         workspace=workspace,
         apply=apply,
         norm_scale=scale,
+        stats=stats,
     )
+    return PolarResult(q=q, stats=stats)

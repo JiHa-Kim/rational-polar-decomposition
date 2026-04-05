@@ -66,9 +66,7 @@ class DWH2Workspace:
     k0: torch.Tensor
     m0: torch.Tensor
     tmp: torch.Tensor
-    rhs: torch.Tensor
     k_final: torch.Tensor
-    linv: torch.Tensor
     sh: torch.Tensor
     invsh: torch.Tensor
 
@@ -102,9 +100,7 @@ class DWH2Workspace:
             k0=mat32(),
             m0=mat32(),
             tmp=mat32(),
-            rhs=mat32(),
             k_final=mat32(),
-            linv=mat32(),
             sh=vec32(),
             invsh=vec32(),
             xbuf=torch.empty((block_rows, n), device=device, dtype=torch.float32),

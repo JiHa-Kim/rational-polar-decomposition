@@ -17,8 +17,9 @@ import statistics
 import time
 import warnings
 from collections import OrderedDict, defaultdict
-from dataclasses import asdict, dataclass
-from typing import Callable, Iterable
+from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+from typing import Any, Callable, Iterable
 
 from bench_common import (
     CaseGenerator,
@@ -132,34 +133,27 @@ class BenchmarkRunner:
         import dwh2
 
         key = (n, dtype_str, self.device.index, int(self.args.gram_block_rows))
-        ws = self.ws_cache.get(key)
-        if ws is not None:
+        if key in self.ws_cache:
             self.ws_cache.move_to_end(key)
-            return ws
+            return self.ws_cache[key]
 
         ws = dwh2.DWH2Workspace.allocate(
-            n,
-            self.device,
-            DTYPE_MAP[dtype_str],
-            block_rows=int(self.args.gram_block_rows),
+            n, self.device, DTYPE_MAP[dtype_str], block_rows=self.args.gram_block_rows
         )
         self.ws_cache[key] = ws
-        self.ws_cache.move_to_end(key)
-
         while len(self.ws_cache) > max(0, self.args.ws_cache_max):
-            _, old_ws = self.ws_cache.popitem(last=False)
-            del old_ws
+            self.ws_cache.popitem(last=False)
             self.clear_transient_memory()
         return ws
 
 
 class RegressionSuite:
-    @staticmethod
-    def _group_records(path: str) -> dict[tuple[str, str, str, str], list[dict]]:
+    def _group_records(path: str | Path) -> dict[tuple[str, str, str, str], list[dict]]:
         grouped: dict[tuple[str, str, str, str], list[dict]] = defaultdict(list)
-        if not os.path.exists(path):
+        path = Path(path)
+        if not path.exists():
             return grouped
-        with open(path, "r", encoding="utf-8") as handle:
+        with path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 if not line.strip():
                     continue
@@ -305,35 +299,25 @@ class RegressionSuite:
                 str(args.gram_block_rows),
                 "--compare-mode",
                 args.compare_mode,
-                "--gns-entrypoint",
-                args.gns_entrypoint,
                 "--gns-reset-iters",
                 args.gns_reset_iters,
+                "--compile" if args.compile else "--no-compile",
+                "--tf32" if args.tf32 else "--no-tf32",
+                "--gns" if args.gns else "--no-gns",
+                "--dwh2" if args.dwh2 else "--no-dwh2",
+                "--metrics" if args.metrics else "--no-metrics",
+                "--time" if args.time else "--no-time",
             ]
             if args.gns_path:
                 cmd.extend(["--gns-path", args.gns_path])
-            if args.compile:
-                cmd.append("--compile")
-            else:
-                cmd.append("--no-compile")
-            if args.no_tf32:
-                cmd.append("--no-tf32")
-            if args.no_gns:
-                cmd.append("--no-gns")
-            if args.no_dwh2:
-                cmd.append("--no-dwh2")
             if args.hard:
                 cmd.append("--hard")
             if args.one_pass:
                 cmd.append("--one-pass")
-            if args.no_metrics:
-                cmd.append("--no-metrics")
-            if args.no_time:
-                cmd.append("--no-time")
             if args.gns_use_kernels:
                 cmd.append("--gns-use-kernels")
             else:
-                cmd.append("--gns-no-use-kernels")
+                cmd.append("--no-gns-use-kernels")
             return cmd
 
         try:
@@ -368,16 +352,16 @@ class RegressionSuite:
 
 
 def import_gns(gns_path: str):
-    root = os.path.dirname(os.path.abspath(__file__))
+    root = Path(__file__).parent.resolve()
     paths = [
-        os.path.join(root, "third_party", "gram-newton-schulz"),
-        os.path.join(root, "third_party", "quack"),
+        root / "third_party" / "gram-newton-schulz",
+        root / "third_party" / "quack",
     ]
     if gns_path:
-        paths.insert(0, os.path.abspath(gns_path))
-    for path in paths:
-        if os.path.exists(path) and path not in sys.path:
-            sys.path.insert(0, path)
+        paths.insert(0, Path(gns_path).resolve())
+    for p in paths:
+        if p.exists() and str(p) not in sys.path:
+            sys.path.insert(0, str(p))
 
     try:
         return importlib.import_module("gram_newton_schulz")
@@ -488,26 +472,6 @@ def method_specs(args, dwh2_speed_core, dwh2_quality_core, gns_core):
     return methods
 
 
-def record_base(
-    args, name: str, case: str, shape: str, median_ms: float, min_ms: float
-) -> dict:
-    return {
-        "method": name,
-        "case": case,
-        "shape": shape,
-        "dtype": args.dtype,
-        "tf32": not args.no_tf32,
-        "compile": args.compile,
-        "trials": args.trials,
-        "warmup": args.warmup,
-        "compare_mode": args.compare_mode,
-        "gns_entrypoint": args.gns_entrypoint,
-        "gns_use_kernels": bool(args.gns_use_kernels),
-        "median_ms": median_ms,
-        "min_ms": min_ms,
-    }
-
-
 def make_record(
     args,
     name: str,
@@ -516,20 +480,35 @@ def make_record(
     median_ms: float,
     min_ms: float,
     *,
-    stats=None,
-    chol_stats=None,
+    stats: dict[str, Any] | None = None,
+    chol_stats: Any = None,
 ) -> Record:
-    payload = record_base(args, name, case, shape, median_ms, min_ms)
-    if stats is not None:
-        payload.update(stats)
-    if chol_stats is not None:
-        payload.update(
+    rec = Record(
+        method=name,
+        case=case,
+        shape=shape,
+        dtype=args.dtype,
+        tf32=args.tf32,
+        compile=args.compile,
+        trials=args.trials,
+        warmup=args.warmup,
+        compare_mode=args.compare_mode,
+        gns_entrypoint=args.gns_entrypoint,
+        gns_use_kernels=bool(args.gns_use_kernels),
+        median_ms=median_ms,
+        min_ms=min_ms,
+    )
+    if stats:
+        rec = replace(rec, **stats)
+    if chol_stats:
+        rec = replace(
+            rec,
             chol_calls=chol_stats.calls,
             chol_shifted_calls=chol_stats.shifted_calls,
             chol_total_retries=chol_stats.total_retries,
             chol_max_jitter=float(chol_stats.max_jitter),
         )
-    return Record(**payload)
+    return rec
 
 
 def median_and_min(times: list[float], no_time: bool) -> tuple[float, float]:
@@ -592,12 +571,13 @@ def benchmark_method(
         raise ValueError(f"Unknown compare mode: {args.compare_mode}")
 
     if args.one_pass:
-        if args.no_time:
-            out = fn_full()
-            med = mn = float("nan")
-        else:
-            out, times = runner.measure(fn_full, args.trials, args.warmup)
-            med, mn = median_and_min(times, False)
+        out, (med, mn) = (
+            (fn_full(), (float("nan"), float("nan")))
+            if args.time
+            else runner.measure(fn_full, args.trials, args.warmup)
+        )
+        if not args.time:
+            med, mn = median_and_min(mn, False)
 
         chol_stats = getattr(out, "stats", dwh2_mod.CholStats())
         metrics = (
@@ -616,13 +596,12 @@ def benchmark_method(
             chol_stats=chol_stats,
         )
     else:
-        if args.no_time:
-            med = mn = float("nan")
-        else:
+        med = mn = float("nan")
+        if args.time:
             _, times = runner.measure(fn_speed, args.trials, args.warmup)
             med, mn = median_and_min(times, False)
 
-        if args.no_metrics:
+        if not args.metrics:
             record = make_record(args, name, case, shape, med, mn)
         else:
             out, _ = runner.measure(fn_full, 1, 0)
@@ -669,7 +648,7 @@ def write_records(args) -> None:
     shapes = parse_shapes(args.shapes)
 
     gns_core = None
-    if not args.no_gns:
+    if args.gns:
         gns_mod = import_gns(args.gns_path)
         if gns_mod is not None:
             gns_core = make_gns_runner(
@@ -743,17 +722,19 @@ def write_records(args) -> None:
             if bar is not None:
                 bar.close()
 
-    if args.no_gns and args.load_gns and os.path.exists(args.load_gns):
+    if not args.gns and args.load_gns and Path(args.load_gns).exists():
         logger.info(f"[merge] GNS results available at {args.load_gns}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--no-tf32", action="store_true")
-    parser.add_argument("--compile", dest="compile", action="store_true")
-    parser.add_argument("--no-compile", dest="compile", action="store_false")
-    parser.set_defaults(compile=True)
+    parser.add_argument(
+        "--tf32", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--compile", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument(
         "--compile-mode",
         default="max-autotune-no-cudagraphs",
@@ -769,11 +750,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline", help="Baseline revision or JSONL")
     parser.add_argument("--hard", action="store_true")
     parser.add_argument("--one-pass", action="store_true")
-    parser.add_argument("--no-metrics", action="store_true")
+    parser.add_argument(
+        "--metrics", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument(
-        "--no-time",
-        action="store_true",
+        "--time",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Skip timing trials and median/min ms report",
     )
     parser.add_argument("--ws-cache-max", type=int, default=1)
@@ -798,8 +782,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Enable upstream optional GNS kernels (requires quack-kernels).",
     )
     parser.add_argument("--gns-reset-iters", default="2")
-    parser.add_argument("--no-gns", action="store_true", help="Skip GNS benchmarks")
-    parser.add_argument("--no-dwh2", action="store_true", help="Skip DWH2 benchmarks")
+    parser.add_argument(
+        "--gns", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--dwh2", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--load-gns", type=str, default="stable/gns_baseline.jsonl")
     return parser
 

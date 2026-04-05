@@ -1,6 +1,7 @@
 import json
 import statistics
 import argparse
+import math
 from collections import defaultdict
 
 
@@ -11,12 +12,49 @@ def load_results(path):
             for line in f:
                 if line.strip():
                     r = json.loads(line)
-                    # Use (shape, dtype) as grouping key, (case) as sub-key
                     k = (r["shape"], r["dtype"])
                     results[k].append(r)
     except FileNotFoundError:
         print(f"File not found: {path}")
     return results
+
+
+def _generate_table(metrics, d_by_case, g_by_case, all_cases):
+    header = ["Case", "Method"] + [m[0] for m in metrics]
+    table_lines = []
+    table_lines.append("| " + " | ".join(header) + " |")
+    table_lines.append("| " + " | ".join(["---"] * len(header)) + " |")
+
+    for case in all_cases:
+        d_rec = d_by_case.get(case)
+        g_rec = g_by_case.get(case)
+
+        if not d_rec or not g_rec:
+            continue
+
+        d_row = [case, "DWH2"]
+        g_row = ["", "GNS"]
+
+        for _, key, prec in metrics:
+            dv = d_rec.get(key, 0.0)
+            gv = g_rec.get(key, 0.0)
+
+            fmt = f"{{:{prec}}}"
+            ds, gs = fmt.format(dv), fmt.format(gv)
+
+            if not math.isnan(dv) and not math.isnan(gv):
+                if dv < gv:
+                    ds = f"**{ds}**"
+                elif gv < dv:
+                    gs = f"**{gs}**"
+            
+            d_row.append(ds)
+            g_row.append(gs)
+
+        table_lines.append("| " + " | ".join(d_row) + " |")
+        table_lines.append("| " + " | ".join(g_row) + " |")
+
+    return "\n".join(table_lines)
 
 
 def format_markdown_table(dwh2_path, gns_path):
@@ -25,13 +63,16 @@ def format_markdown_table(dwh2_path, gns_path):
 
     all_groups = sorted(set(dwh2_raw.keys()) | set(gns_raw.keys()))
 
-    metrics = [
-        ("Med ms", "median_ms", ".2f", False),
-        ("Ortho", "ortho_proj", ".2e", True),
-        ("Supp", "ortho_supp", ".2e", True),
-        ("Skew", "p_skew_rel_fro", ".2e", True),
-        ("P2-Err", "p2_gram_rel_fro", ".2e", True),
-        ("Rec", "rec_resid", ".2e", True),
+    primary_metrics = [
+        ("Med ms", "median_ms", ".2f"),
+        ("Ortho", "ortho_proj", ".2e"),
+        ("Supp", "ortho_supp", ".2e"),
+        ("P2-Err", "p2_gram_rel_fro", ".2e"),
+        ("Rec", "rec_resid", ".2e"),
+    ]
+    
+    skew_metrics = [
+        ("Skew", "p_skew_rel_fro", ".2e"),
     ]
 
     output = [
@@ -50,50 +91,17 @@ def format_markdown_table(dwh2_path, gns_path):
     for shape, dtype in all_groups:
         output.append(f"## Shape: {shape}, Dtype: {dtype}")
         output.append("")
-        
-        header = ["Case", "Method"] + [m[0] for m in metrics]
-        table_lines = []
-        table_lines.append("| " + " | ".join(header) + " |")
-        table_lines.append("| " + " | ".join(["---"] * len(header)) + " |")
 
-        # Organize by case
         d_by_case = {r["case"]: r for r in dwh2_raw.get((shape, dtype), [])}
         g_by_case = {r["case"]: r for r in gns_raw.get((shape, dtype), [])}
-        
         all_cases = sorted(set(d_by_case.keys()) | set(g_by_case.keys()))
 
-        for case in all_cases:
-            d_rec = d_by_case.get(case)
-            g_rec = g_by_case.get(case)
+        output.append("### Primary Quality & Performance")
+        output.append(_generate_table(primary_metrics, d_by_case, g_by_case, all_cases))
+        output.append("")
 
-            if not d_rec or not g_rec:
-                continue
-
-            d_row = [case, "DWH2"]
-            g_row = ["", "GNS"]
-
-            for _, key, prec, is_exp in metrics:
-                dv = d_rec.get(key, 0.0)
-                gv = g_rec.get(key, 0.0)
-
-                fmt = f"{{:{prec}}}"
-                ds, gs = fmt.format(dv), fmt.format(gv)
-
-                # Skip comparison for metrics that are NaN or Inf
-                import math
-                if not math.isnan(dv) and not math.isnan(gv):
-                    if dv < gv:
-                        ds = f"**{ds}**"
-                    elif gv < dv:
-                        gs = f"**{gs}**"
-                
-                d_row.append(ds)
-                g_row.append(gs)
-
-            table_lines.append("| " + " | ".join(d_row) + " |")
-            table_lines.append("| " + " | ".join(g_row) + " |")
-
-        output.append("\n".join(table_lines))
+        output.append("### Symmetry Analysis (Secondary)")
+        output.append(_generate_table(skew_metrics, d_by_case, g_by_case, all_cases))
         output.append("")
 
     return "\n".join(output)

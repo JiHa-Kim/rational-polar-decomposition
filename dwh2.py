@@ -196,19 +196,19 @@ def _chol_spd_inplace_ex(
     n = a.shape[0]
     u = float(torch.finfo(a.dtype).eps)
     jitter = max(jitter_scale * n * u, min_jitter)
-    
+
     # Equilibrate: D^-1 A D^-1
     d = torch.clamp(a.diagonal(), min=1e-30).sqrt()
     inv_d = d.reciprocal()
     a.mul_(inv_d[:, None]).mul_(inv_d[None, :])
-    
+
     a.diagonal().add_(jitter)
     torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
     if int(info_out.item()) == 0:
         _update_chol_stats(stats, shifted=False, retries=0, jitter=jitter)
         L_out.mul_(d[:, None])
         return L_out
-        
+
     retries = 1
     step = jitter * 10.0
     while int(info_out.item()) != 0 and retries <= max_retries:
@@ -221,13 +221,13 @@ def _chol_spd_inplace_ex(
             return L_out
         retries += 1
         step *= 10.0
-        
+
     # Final fallback if all retries fail
     a.diagonal().add_(0.1)
     jitter += 0.1
     torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
     _update_chol_stats(stats, shifted=True, retries=retries, jitter=jitter)
-    
+
     # Map back: L_out = D L_out
     L_out.mul_(d[:, None])
     return L_out
@@ -280,7 +280,6 @@ def normalize_small_gram(
     gram = workspace.gram
     scratch = workspace.scratch
     xbuf = workspace.xbuf
-    tmp = workspace.tmp
 
     t1 = torch.linalg.vector_norm(x, dtype=torch.float32).pow(2).to(torch.float64)
 
@@ -390,7 +389,10 @@ def _apply_k(
         if float(k_absmax.item()) > safe_max:
             ratio = (k_absmax / safe_max).clamp_min(1.0)
             s_f32 = float(
-                torch.pow(torch.tensor(2.0, device=ratio.device), torch.ceil(torch.log2(ratio))).item()    
+                torch.pow(
+                    torch.tensor(2.0, device=ratio.device),
+                    torch.ceil(torch.log2(ratio)),
+                ).item()
             )
 
         if k_raw_absmax > float(finfo.max) or norm_scale is not None or s_f32 != 1.0:
@@ -431,10 +433,10 @@ def _compute_gram_blocked(
     # x: (m, n), m_mat: (n, n), out: (n, n)
     m, n = x.shape
     out.zero_()
-    
+
     # We use float32 for these matmuls to ensure precision and use TF32 speedup.
     # The memory cost for 16k x 4k float32 is 256MB, which is acceptable.
-    
+
     if m <= 32768:
         if m_mat is not None:
             # Y = X.float() @ M.float()
@@ -449,7 +451,7 @@ def _compute_gram_blocked(
     for start in range(0, m, workspace.block_rows):
         rows = min(workspace.block_rows, m - start)
         x_rows = x[start : start + rows].float()
-        
+
         if m_mat is not None:
             y = torch.mm(x_rows, m_mat.float())
             out.addmm_(y.mT, y)
@@ -524,7 +526,7 @@ def _dwh2_core_impl(
     buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
     buf.add_(L, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
-    
+
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
     scratch.copy_(m0.mT)

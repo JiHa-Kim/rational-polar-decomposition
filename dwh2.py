@@ -65,7 +65,6 @@ class DWH2Workspace:
     h0: torch.Tensor
     k0: torch.Tensor
     m0: torch.Tensor
-    tmp: torch.Tensor
     k_final: torch.Tensor
     sh: torch.Tensor
     invsh: torch.Tensor
@@ -99,7 +98,6 @@ class DWH2Workspace:
             h0=mat32(),
             k0=mat32(),
             m0=mat32(),
-            tmp=mat32(),
             k_final=mat32(),
             sh=vec32(),
             invsh=vec32(),
@@ -305,24 +303,21 @@ def normalize_small_gram(
     gram = workspace.gram
     scratch = workspace.scratch
     xbuf = workspace.xbuf
-    tmp = workspace.tmp
 
     gram.zero_()
-    t1 = torch.zeros((), device=a.device, dtype=torch.float64)
 
     for start in range(0, m, workspace.block_rows):
         rows = min(workspace.block_rows, m - start)
         xbuf[:rows].copy_(x[start : start + rows])
         gram.addmm_(xbuf[:rows].mT, xbuf[:rows])
-        t1 += torch.sum(xbuf[:rows] * xbuf[:rows], dtype=torch.float64)
 
     _symmetrize_(gram, scratch)
 
+    # Note: sum(diag(gram)) == trace(X^T X) == sum(X * X)
     t1_hat = torch.sum(gram.diagonal(), dtype=torch.float64)
-    tmp.copy_(gram)
-    tmp.mul_(gram)
-    t2_hat = torch.sum(tmp, dtype=torch.float64)
-
+    # Reuse scratch to avoid extra (n, n) allocation for gram * gram
+    torch.mul(gram, gram, out=scratch)
+    t2_hat = torch.sum(scratch, dtype=torch.float64)
     n_t = torch.tensor(float(n), device=a.device, dtype=torch.float64)
     rad = torch.clamp_min((n_t * t2_hat) - (t1_hat * t1_hat), 0.0)
     raw_lambda = (t1_hat + torch.sqrt((n_t - 1.0) * rad)) / n_t
@@ -332,7 +327,7 @@ def normalize_small_gram(
         eta += 2.0**-10
     eta_t = torch.tensor(float(eta), device=a.device, dtype=torch.float64)
 
-    ub_lambda = torch.clamp_min(raw_lambda + eta_t * t1, 0.0)
+    ub_lambda = torch.clamp_min(raw_lambda + eta_t * t1_hat, 0.0)
     denom = torch.sqrt(ub_lambda).to(dtype=torch.float32)
     if config.safety != 1.0:
         denom = denom * float(config.safety)

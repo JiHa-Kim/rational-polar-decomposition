@@ -191,7 +191,7 @@ class MetricsSuite:
         )
         e_supp = float((e_supp_num / e_supp_den).item())
 
-        P = workspace.rhs
+        P = workspace.m0
         P.copy_(H.mT).add_(H).mul_(0.5)
 
         skew = scratch.copy_(H).sub_(P)

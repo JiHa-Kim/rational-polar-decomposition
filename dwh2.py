@@ -457,7 +457,6 @@ def _dwh2_core_impl(
     k0 = workspace.k0
     m0 = workspace.m0
     tmp = workspace.tmp
-    rhs = workspace.rhs
     k_final = workspace.k_final
     sh = workspace.sh
     invsh = workspace.invsh
@@ -470,7 +469,7 @@ def _dwh2_core_impl(
     buf.diagonal().add_(1.0)
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
-    _spd_inv_from_cholesky(L, h0, tmp, rhs)
+    _spd_inv_from_cholesky(L, h0, tmp, scratch)
     _symmetrize_(h0, scratch)
 
     k0.copy_(h0).mul_(-1.0)
@@ -486,6 +485,7 @@ def _dwh2_core_impl(
     invsh.copy_(sh).reciprocal_()
 
     tmp.copy_(h0).mul_(invsh[:, None]).mul_(invsh[None, :])
+    # Note: L is derived from gram + shifts; scratch is free for mm intermediate
     scratch.copy_(k0).mul_(sh[:, None])
     torch.mm(tmp, scratch, out=L)
     L.mul_(sh[:, None])
@@ -496,10 +496,10 @@ def _dwh2_core_impl(
     buf.diagonal().add_(1.0)
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
-    rhs.copy_(m0.mT)
-    torch.linalg.solve_triangular(L, rhs, upper=False, left=True, out=rhs)
-    torch.linalg.solve_triangular(L.mT, rhs, upper=True, left=True, out=rhs)
-    tmp.copy_(rhs.mT)
+    scratch.copy_(m0.mT)
+    torch.linalg.solve_triangular(L, scratch, upper=False, left=True, out=scratch)
+    torch.linalg.solve_triangular(L.mT, scratch, upper=True, left=True, out=scratch)
+    tmp.copy_(scratch.mT)
 
     k_final.copy_(m0).mul_(s1.alpha)
     k_final.add_(tmp, alpha=s1.beta)

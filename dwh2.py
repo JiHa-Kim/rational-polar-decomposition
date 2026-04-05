@@ -27,10 +27,16 @@ class PolarResult:
     stats: CholStats = field(default_factory=lambda: CholStats())
 
 
-PAPER_MUON_ELL = 1e-3
-NORM_EPS = 1e-7
-NORM_SAFETY = 1.01
-GRAM_BLOCK_ROWS = 1024
+@dataclass(frozen=True)
+class DWH2Config:
+    ell0: float = 1e-3
+    eps: float = 1e-7
+    safety: float = 1.01
+    gram_block_rows: int = 1024
+
+
+# Default configuration instance
+DEFAULT_CONFIG = DWH2Config()
 
 
 @dataclass(frozen=True)
@@ -102,7 +108,7 @@ class DWH2Workspace:
         n: int,
         device: torch.device,
         out_dtype: torch.dtype,
-        block_rows: int = GRAM_BLOCK_ROWS,
+        block_rows: int = 1024,
     ) -> "DWH2Workspace":
         def mat32() -> torch.Tensor:
             return torch.empty((n, n), device=device, dtype=torch.float32)
@@ -268,6 +274,7 @@ def _ensure_workspace(
     n: int,
     device: torch.device,
     out_dtype: torch.dtype,
+    config: DWH2Config = DEFAULT_CONFIG,
 ) -> DWH2Workspace:
     if (
         workspace is None
@@ -279,7 +286,7 @@ def _ensure_workspace(
             n,
             device,
             out_dtype,
-            block_rows=GRAM_BLOCK_ROWS,
+            block_rows=config.gram_block_rows,
         )
     return workspace
 
@@ -288,8 +295,7 @@ def _ensure_workspace(
 def normalize_small_gram(
     a: torch.Tensor,
     *,
-    eps: float = NORM_EPS,
-    safety: float = NORM_SAFETY,
+    config: DWH2Config = DEFAULT_CONFIG,
     workspace: Optional[DWH2Workspace] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     transposed = a.shape[0] < a.shape[1]
@@ -297,7 +303,7 @@ def normalize_small_gram(
     m, n = x.shape
     device = a.device
 
-    workspace = _ensure_workspace(workspace, n, device, a.dtype)
+    workspace = _ensure_workspace(workspace, n, device, a.dtype, config)
 
     gram = workspace.gram
     scratch = workspace.scratch
@@ -334,9 +340,9 @@ def normalize_small_gram(
     ub_lambda = torch.clamp_min(raw_lambda + eta_t * t1, 0.0)
 
     denom = torch.sqrt(ub_lambda).to(dtype=torch.float32)
-    if safety != 1.0:
-        denom = denom * float(safety)
-    denom = denom + float(eps)
+    if config.safety != 1.0:
+        denom = denom * float(config.safety)
+    denom = denom + float(config.eps)
 
     inv_denom = denom.reciprocal()
     inv_denom_sq = inv_denom * inv_denom
@@ -350,15 +356,13 @@ def normalize_small_gram(
 def normalize_moment_with_small_gram(
     a: torch.Tensor,
     *,
-    eps: float = NORM_EPS,
-    safety: float = NORM_SAFETY,
+    config: DWH2Config = DEFAULT_CONFIG,
     workspace: Optional[DWH2Workspace] = None,
     inplace: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     scale, gram = normalize_small_gram(
         a,
-        eps=eps,
-        safety=safety,
+        config=config,
         workspace=workspace,
     )
 
@@ -374,7 +378,7 @@ def _dwh2_core_impl(
     a_norm: torch.Tensor,
     gram_norm: torch.Tensor,
     *,
-    ell0: float = PAPER_MUON_ELL,
+    config: DWH2Config = DEFAULT_CONFIG,
     params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
@@ -384,9 +388,9 @@ def _dwh2_core_impl(
     assert apply in ("fp16", "fp32")
     transposed = a_norm.shape[0] < a_norm.shape[1]
     n = int(min(a_norm.shape))
-    workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype)
+    workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype, config)
 
-    p = params if params is not None else get_dwh2_params(float(ell0))
+    p = params if params is not None else get_dwh2_params(float(config.ell0))
     s0, s1, delta = p.step0, p.step1, p.delta
 
     gram = workspace.gram
@@ -471,7 +475,7 @@ def dwh2_core_q(
     a_norm: torch.Tensor,
     gram_norm: torch.Tensor,
     *,
-    ell0: float = PAPER_MUON_ELL,
+    config: DWH2Config = DEFAULT_CONFIG,
     params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
@@ -480,7 +484,7 @@ def dwh2_core_q(
     return _dwh2_core_impl(
         a_norm,
         gram_norm,
-        ell0=ell0,
+        config=config,
         params=params,
         workspace=workspace,
         apply=apply,
@@ -494,7 +498,7 @@ def dwh2_core(
     a_norm: torch.Tensor,
     gram_norm: torch.Tensor,
     *,
-    ell0: float = PAPER_MUON_ELL,
+    config: DWH2Config = DEFAULT_CONFIG,
     params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
@@ -504,7 +508,7 @@ def dwh2_core(
     y = _dwh2_core_impl(
         a_norm,
         gram_norm,
-        ell0=ell0,
+        config=config,
         params=params,
         workspace=workspace,
         apply=apply,
@@ -518,28 +522,22 @@ def dwh2_core(
 def dwh2_end_to_end(
     a: torch.Tensor,
     *,
-    ell0: float = PAPER_MUON_ELL,
-    eps: float = NORM_EPS,
-    safety: float = NORM_SAFETY,
+    config: DWH2Config = DEFAULT_CONFIG,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
-    inplace_normalize: bool = False,
 ) -> PolarResult:
-    del inplace_normalize
-
     n = int(min(a.shape))
-    workspace = _ensure_workspace(workspace, n, a.device, a.dtype)
+    workspace = _ensure_workspace(workspace, n, a.device, a.dtype, config)
 
     scale, gram_norm = normalize_small_gram(
         a,
-        eps=eps,
-        safety=safety,
+        config=config,
         workspace=workspace,
     )
     return dwh2_core(
         a,
         gram_norm,
-        ell0=ell0,
+        config=config,
         workspace=workspace,
         apply=apply,
         norm_scale=scale,

@@ -29,7 +29,7 @@ class PolarResult:
 
 @dataclass(frozen=True)
 class DWH2Config:
-    ell0: float = 1e-7
+    ell0: float = 1e-3
     eps: float = 1e-7
     safety: float = 1.01
     gram_block_rows: int = 1024

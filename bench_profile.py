@@ -379,16 +379,29 @@ class RegressionSuite:
                 baseline_json = f"baseline_{baseline}.jsonl"
                 try:
                     # 2. Checkout revision
-                    subprocess.run(["git", "checkout", baseline, "--", "dwh2.py"], check=True)
+                    subprocess.run(["git", "checkout", "-f", baseline, "--", "dwh2.py"], check=True)
                     
                     # 3. Run benchmark for baseline
                     import sys
+                    # Build command, explicitly avoiding --baseline to prevent recursion
                     cmd = [sys.executable, "bench_profile.py", "--output", baseline_json, "--no-metrics", "--quiet"]
-                    for arg in sys.argv[1:]:
-                        if arg not in ["--baseline", baseline, "--output"]:
-                            cmd.append(arg)
+                    
+                    # We need to forward the original CLI args but skip the baseline ones
+                    i = 1
+                    while i < len(sys.argv):
+                        arg = sys.argv[i]
+                        if arg == "--baseline":
+                            i += 2 # Skip flag and its value
+                            continue
+                        if arg == "--output":
+                            i += 2
+                            continue
+                        cmd.append(arg)
+                        i += 1
+                        
                     if "--no-gns" not in cmd: cmd.append("--no-gns")
                     
+                    # Run the nested process
                     subprocess.run(cmd, check=True)
                     
                     # 4. Compare

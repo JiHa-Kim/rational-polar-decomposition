@@ -315,9 +315,9 @@ class RegressionSuite:
         all_keys = sorted(set(base.keys()) | set(curr.keys()))
 
         print(
-            f"\n{'Method':<6} {'Case':<16} {'Shape':<12} {'Speed Delta':<14} {'Ortho Drift':<14} {'P-Err Drift':<14}"
+            f"\n{'Method':<6} {'Case':<16} {'Shape':<12} {'Median (ms)':<20} {'Ortho (F)':<20} {'P-Err (F)':<20}"
         )
-        print("-" * 88)
+        print("-" * 100)
 
         all_passed = True
         for k in all_keys:
@@ -327,7 +327,7 @@ class RegressionSuite:
             # Speed comparison (median_ms)
             b_med = statistics.median([r["median_ms"] for r in base[k]])
             c_med = statistics.median([r["median_ms"] for r in curr[k]])
-            speed_diff = (c_med - b_med) / b_med if b_med > 0 else 0.0
+            time_diff = (c_med - b_med) / b_med if b_med > 0 else 0.0
 
             # Quality comparison (ortho_fro)
             b_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in base[k]])
@@ -345,20 +345,29 @@ class RegressionSuite:
                 (c_perr - b_perr) / b_perr if b_perr > 1e-18 else (c_perr - b_perr)
             )
 
-            s_delta = RegressionSuite._color_diff(speed_diff)
-            o_delta = RegressionSuite._color_diff(ortho_diff, False)
-            p_delta = RegressionSuite._color_diff(perr_diff, False)
+            def fmt_abs_delta(abs_val, delta_val, is_speed=True):
+                delta_str = RegressionSuite._color_diff(delta_val, is_speed)
+                if is_speed:
+                    return f"{abs_val:>8.2f} ({delta_str:>7})"
+                else:
+                    return f"{abs_val:>8.2e} ({delta_str:>7})"
 
-            if ortho_diff > metric_thresh or perr_diff > metric_thresh:
+            s_col = fmt_abs_delta(c_med, time_diff, True)
+            o_col = fmt_abs_delta(c_ortho, ortho_diff, False)
+            p_col = fmt_abs_delta(c_perr, perr_diff, False)
+
+            if (not math.isnan(ortho_diff) and ortho_diff > metric_thresh) or \
+               (not math.isnan(perr_diff) and perr_diff > metric_thresh):
                 all_passed = False
 
             print(
-                f"{k[0]:<6} {k[1]:<16} {k[2]:<12} {s_delta:<23} {o_delta:<23} {p_delta:<23}"
+                f"{k[0]:<6} {k[1]:<16} {k[2]:<12} {s_col:<20} {o_col:<20} {p_col:<20}"
             )
         return all_passed
 
     @staticmethod
-    def summarize(path, baseline=None) -> bool:
+    def summarize(path, args) -> bool:
+        baseline = args.baseline
         if baseline:
             # Check if baseline is a git revision
             import subprocess
@@ -383,23 +392,21 @@ class RegressionSuite:
                     
                     # 3. Run benchmark for baseline
                     import sys
-                    # Build command, explicitly avoiding --baseline to prevent recursion
-                    cmd = [sys.executable, "bench_profile.py", "--output", baseline_json, "--no-metrics", "--quiet"]
+                    # Build command explicitly from args to ensure all flags like --hard are forwarded
+                    # We ensure no-metrics is False for the baseline run to have comparison data
+                    cmd = [sys.executable, "bench_profile.py", "--output", baseline_json, "--quiet"]
                     
-                    # We need to forward the original CLI args but skip the baseline ones
-                    i = 1
-                    while i < len(sys.argv):
-                        arg = sys.argv[i]
-                        if arg == "--baseline":
-                            i += 2 # Skip flag and its value
-                            continue
-                        if arg == "--output":
-                            i += 2
-                            continue
-                        cmd.append(arg)
-                        i += 1
-                        
-                    if "--no-gns" not in cmd: cmd.append("--no-gns")
+                    if args.no_gns: cmd.append("--no-gns")
+                    if args.hard: cmd.append("--hard")
+                    if not args.compile: cmd.append("--no-compile")
+                    if args.compile: cmd.append("--compile")
+                    cmd.extend(["--device", args.device])
+                    cmd.extend(["--dtype", args.dtype])
+                    cmd.extend(["--trials", str(args.trials)])
+                    cmd.extend(["--warmup", str(args.warmup)])
+                    cmd.extend(["--seeds", args.seeds])
+                    cmd.extend(["--cases", args.cases])
+                    cmd.extend(["--shapes", args.shapes])
                     
                     # Run the nested process
                     subprocess.run(cmd, check=True)
@@ -508,8 +515,8 @@ def main(argv: list[str] | None = None) -> bool:
     ap.set_defaults(compile=True)
     ap.add_argument(
         "--compile-mode",
-        default="max-autotune",
-        choices=["reduce-overhead", "max-autotune"],
+        default="max-autotune-no-cudagraphs",
+        choices=["reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"],
     )
     ap.add_argument("--trials", type=int, default=10)
     ap.add_argument("--warmup", type=int, default=3)
@@ -531,7 +538,17 @@ def main(argv: list[str] | None = None) -> bool:
     ap.add_argument("--no-metrics", action="store_true")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--ws-cache-max", type=int, default=1)
-    ap.add_argument("--gram-block-rows", type=int, default=dwh2.DEFAULT_CONFIG.gram_block_rows)
+    # Handle missing DEFAULT_CONFIG during arg parsing
+    default_gbr = 1024
+    try:
+        import dwh2
+        if hasattr(dwh2, "DEFAULT_CONFIG"):
+            default_gbr = dwh2.DEFAULT_CONFIG.gram_block_rows
+        elif hasattr(dwh2, "GRAM_BLOCK_ROWS"):
+            default_gbr = dwh2.GRAM_BLOCK_ROWS
+    except Exception:
+        pass
+    ap.add_argument("--gram-block-rows", type=int, default=default_gbr)
     ap.add_argument("--gns-path", default="")
     ap.add_argument("--gns-use-kernels", action="store_true")
     ap.add_argument("--gns-reset-iters", default="2")
@@ -588,7 +605,12 @@ def main(argv: list[str] | None = None) -> bool:
         if gns_core is not None:
             gns_core = torch.compile(gns_core, mode=args.compile_mode, fullgraph=False)
 
-    params = dwh2_mod.get_dwh2_params(dwh2_mod.DEFAULT_CONFIG.ell0)
+    # Handle old vs new interface
+    if hasattr(dwh2_mod, "DEFAULT_CONFIG"):
+        ell0 = dwh2_mod.DEFAULT_CONFIG.ell0
+    else:
+        ell0 = getattr(dwh2_mod, "PAPER_MUON_ELL", 1e-3)
+    params = dwh2_mod.get_dwh2_params(ell0)
 
     count_methods = 1 if args.no_gns else 2
     total = len(shapes) * len(cases) * len(seeds) * count_methods
@@ -737,7 +759,7 @@ def main(argv: list[str] | None = None) -> bool:
     if args.no_gns and args.load_gns and os.path.exists(args.load_gns):
         logger.info(f"[merge] GNS results available at {args.load_gns}")
 
-    return RegressionSuite.summarize(args.output, baseline=args.baseline)
+    return RegressionSuite.summarize(args.output, args)
 
 
 def main_hard() -> None:

@@ -27,16 +27,10 @@ class PolarResult:
     stats: CholStats = field(default_factory=lambda: CholStats())
 
 
-@dataclass(frozen=True)
-class DWH2Config:
-    ell0: float = 1e-3
-    eps: float = 1e-7
-    safety: float = 1.01
-    gram_block_rows: int = 1024
-
-
-# Default configuration instance
-DEFAULT_CONFIG = DWH2Config()
+PAPER_MUON_ELL = 1e-3
+NORM_EPS = 1e-7
+NORM_SAFETY = 1.01
+GRAM_BLOCK_ROWS = 1024
 
 
 @dataclass(frozen=True)
@@ -78,67 +72,81 @@ def get_dwh2_params(ell0: float) -> DWH2Params:
     )
 
 
+@dataclass
 class DWH2Workspace:
-    def __init__(
-        self,
-        n: int,
-        device: torch.device,
-        out_dtype: torch.dtype,
-        block_rows: int = 1024,
-    ):
-        self.n = n
-        self.device = device
-        self.out_dtype = out_dtype
-        self.block_rows = block_rows
+    n: int
+    device: torch.device
+    out_dtype: torch.dtype
+    block_rows: int
 
-        # Pre-allocate standard buffers in float32 for stability
-        def mat32() -> torch.Tensor:
-            return torch.empty((n, n), device=device, dtype=torch.float32)
+    gram: torch.Tensor
+    buf: torch.Tensor
+    scratch: torch.Tensor
+    h0: torch.Tensor
+    k0: torch.Tensor
+    m0: torch.Tensor
+    tmp: torch.Tensor
+    rhs: torch.Tensor
+    k_final: torch.Tensor
+    linv: torch.Tensor
+    sh: torch.Tensor
+    invsh: torch.Tensor
 
-        def vec32() -> torch.Tensor:
-            return torch.empty((n,), device=device, dtype=torch.float32)
-
-        self.gram = mat32()
-        self.buf = mat32()
-        self.scratch = mat32()
-        self.h0 = mat32()
-        self.k0 = mat32()
-        self.m0 = mat32()
-        self.tmp = mat32()
-        self.rhs = mat32()
-        self.k_final = mat32()
-        self.linv = mat32()
-        self.sh = vec32()
-        self.invsh = vec32()
-        self.xbuf = torch.empty((block_rows, n), device=device, dtype=torch.float32)
-        self.L = mat32()
-        self.info = torch.empty((), device=device, dtype=torch.int32)
-
-        # Optional/Lazy buffers
-        self._k_cast: Optional[torch.Tensor] = None
+    xbuf: torch.Tensor
+    L: torch.Tensor
+    info: torch.Tensor
+    k_cast: Optional[torch.Tensor] = None
 
     @staticmethod
     def allocate(
         n: int,
         device: torch.device,
         out_dtype: torch.dtype,
-        block_rows: int = 1024,
+        block_rows: int = GRAM_BLOCK_ROWS,
     ) -> "DWH2Workspace":
-        return DWH2Workspace(n, device, out_dtype, block_rows)
+        def mat32() -> torch.Tensor:
+            return torch.empty((n, n), device=device, dtype=torch.float32)
+
+        def vec32() -> torch.Tensor:
+            return torch.empty((n,), device=device, dtype=torch.float32)
+
+        return DWH2Workspace(
+            n=n,
+            device=device,
+            out_dtype=out_dtype,
+            block_rows=block_rows,
+            gram=mat32(),
+            buf=mat32(),
+            scratch=mat32(),
+            h0=mat32(),
+            k0=mat32(),
+            m0=mat32(),
+            tmp=mat32(),
+            rhs=mat32(),
+            k_final=mat32(),
+            linv=mat32(),
+            sh=vec32(),
+            invsh=vec32(),
+            xbuf=torch.empty((block_rows, n), device=device, dtype=torch.float32),
+            L=mat32(),
+            info=torch.empty((), device=device, dtype=torch.int32),
+        )
 
     def ensure_k_cast(self) -> torch.Tensor:
+        k_cast = self.k_cast
         if (
-            self._k_cast is None
-            or self._k_cast.shape != (self.n, self.n)
-            or self._k_cast.device != self.device
-            or self._k_cast.dtype != self.out_dtype
+            k_cast is None
+            or k_cast.shape != (self.n, self.n)
+            or k_cast.device != self.device
+            or k_cast.dtype != self.out_dtype
         ):
-            self._k_cast = torch.empty(
+            k_cast = torch.empty(
                 (self.n, self.n),
                 device=self.device,
                 dtype=self.out_dtype,
             )
-        return self._k_cast
+            self.k_cast = k_cast
+        return k_cast
 
 
 def _symmetrize_(a: torch.Tensor, scratch: torch.Tensor) -> None:
@@ -216,12 +224,50 @@ def _chol_spd_inplace_ex(
     return L_out
 
 
+def _tri_inv_lower_inplace(
+    L: torch.Tensor, out: torch.Tensor, work: torch.Tensor, leaf: int = 512
+) -> None:
+    n = L.shape[0]
+    if n <= leaf:
+        out.zero_()
+        out.diagonal().fill_(1.0)
+        torch.linalg.solve_triangular(L, out, upper=False, left=True, out=out)
+        return
+
+    k = n // 2
+    A = L[:k, :k]
+    C = L[k:, :k]
+    D = L[k:, k:]
+
+    outA = out[:k, :k]
+    outC = out[k:, :k]
+    outD = out[k:, k:]
+
+    workA = work[:k, :k]
+    workC = work[k:, :k]
+    workD = work[k:, k:]
+
+    _tri_inv_lower_inplace(A, outA, workA, leaf=leaf)
+    _tri_inv_lower_inplace(D, outD, workD, leaf=leaf)
+
+    torch.mm(outD, C, out=workC)
+    torch.mm(workC, outA, out=outC)
+    outC.mul_(-1.0)
+    out[:k, k:].zero_()
+
+
+def _spd_inv_from_cholesky(
+    L: torch.Tensor, invA: torch.Tensor, linv: torch.Tensor, work: torch.Tensor
+) -> None:
+    _tri_inv_lower_inplace(L, linv, work, leaf=512)
+    torch.mm(linv.mT, linv, out=invA)
+
+
 def _ensure_workspace(
     workspace: Optional[DWH2Workspace],
     n: int,
     device: torch.device,
     out_dtype: torch.dtype,
-    config: DWH2Config = DEFAULT_CONFIG,
 ) -> DWH2Workspace:
     if (
         workspace is None
@@ -233,7 +279,7 @@ def _ensure_workspace(
             n,
             device,
             out_dtype,
-            block_rows=config.gram_block_rows,
+            block_rows=GRAM_BLOCK_ROWS,
         )
     return workspace
 
@@ -242,7 +288,8 @@ def _ensure_workspace(
 def normalize_small_gram(
     a: torch.Tensor,
     *,
-    config: DWH2Config = DEFAULT_CONFIG,
+    eps: float = NORM_EPS,
+    safety: float = NORM_SAFETY,
     workspace: Optional[DWH2Workspace] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     transposed = a.shape[0] < a.shape[1]
@@ -250,7 +297,7 @@ def normalize_small_gram(
     m, n = x.shape
     device = a.device
 
-    workspace = _ensure_workspace(workspace, n, device, a.dtype, config)
+    workspace = _ensure_workspace(workspace, n, device, a.dtype)
 
     gram = workspace.gram
     scratch = workspace.scratch
@@ -287,9 +334,9 @@ def normalize_small_gram(
     ub_lambda = torch.clamp_min(raw_lambda + eta_t * t1, 0.0)
 
     denom = torch.sqrt(ub_lambda).to(dtype=torch.float32)
-    if config.safety != 1.0:
-        denom = denom * float(config.safety)
-    denom = denom + float(config.eps)
+    if safety != 1.0:
+        denom = denom * float(safety)
+    denom = denom + float(eps)
 
     inv_denom = denom.reciprocal()
     inv_denom_sq = inv_denom * inv_denom
@@ -303,13 +350,15 @@ def normalize_small_gram(
 def normalize_moment_with_small_gram(
     a: torch.Tensor,
     *,
-    config: DWH2Config = DEFAULT_CONFIG,
+    eps: float = NORM_EPS,
+    safety: float = NORM_SAFETY,
     workspace: Optional[DWH2Workspace] = None,
     inplace: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     scale, gram = normalize_small_gram(
         a,
-        config=config,
+        eps=eps,
+        safety=safety,
         workspace=workspace,
     )
 
@@ -325,7 +374,7 @@ def _dwh2_core_impl(
     a_norm: torch.Tensor,
     gram_norm: torch.Tensor,
     *,
-    config: DWH2Config = DEFAULT_CONFIG,
+    ell0: float = PAPER_MUON_ELL,
     params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
@@ -335,9 +384,9 @@ def _dwh2_core_impl(
     assert apply in ("fp16", "fp32")
     transposed = a_norm.shape[0] < a_norm.shape[1]
     n = int(min(a_norm.shape))
-    workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype, config)
+    workspace = _ensure_workspace(workspace, n, a_norm.device, a_norm.dtype)
 
-    p = params if params is not None else get_dwh2_params(float(config.ell0))
+    p = params if params is not None else get_dwh2_params(float(ell0))
     s0, s1, delta = p.step0, p.step1, p.delta
 
     gram = workspace.gram
@@ -361,8 +410,7 @@ def _dwh2_core_impl(
     buf.diagonal().add_(1.0)
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
-    # Fast LAPACK-based inversion
-    torch.cholesky_inverse(L, upper=False, out=h0)
+    _spd_inv_from_cholesky(L, h0, linv, rhs)
     _symmetrize_(h0, scratch)
 
     k0.copy_(h0).mul_(-1.0)
@@ -423,7 +471,7 @@ def dwh2_core_q(
     a_norm: torch.Tensor,
     gram_norm: torch.Tensor,
     *,
-    config: DWH2Config = DEFAULT_CONFIG,
+    ell0: float = PAPER_MUON_ELL,
     params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
@@ -432,7 +480,7 @@ def dwh2_core_q(
     return _dwh2_core_impl(
         a_norm,
         gram_norm,
-        config=config,
+        ell0=ell0,
         params=params,
         workspace=workspace,
         apply=apply,
@@ -446,7 +494,7 @@ def dwh2_core(
     a_norm: torch.Tensor,
     gram_norm: torch.Tensor,
     *,
-    config: DWH2Config = DEFAULT_CONFIG,
+    ell0: float = PAPER_MUON_ELL,
     params: Optional[DWH2Params] = None,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
@@ -456,7 +504,7 @@ def dwh2_core(
     y = _dwh2_core_impl(
         a_norm,
         gram_norm,
-        config=config,
+        ell0=ell0,
         params=params,
         workspace=workspace,
         apply=apply,
@@ -470,22 +518,28 @@ def dwh2_core(
 def dwh2_end_to_end(
     a: torch.Tensor,
     *,
-    config: DWH2Config = DEFAULT_CONFIG,
+    ell0: float = PAPER_MUON_ELL,
+    eps: float = NORM_EPS,
+    safety: float = NORM_SAFETY,
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
+    inplace_normalize: bool = False,
 ) -> PolarResult:
+    del inplace_normalize
+
     n = int(min(a.shape))
-    workspace = _ensure_workspace(workspace, n, a.device, a.dtype, config)
+    workspace = _ensure_workspace(workspace, n, a.device, a.dtype)
 
     scale, gram_norm = normalize_small_gram(
         a,
-        config=config,
+        eps=eps,
+        safety=safety,
         workspace=workspace,
     )
     return dwh2_core(
         a,
         gram_norm,
-        config=config,
+        ell0=ell0,
         workspace=workspace,
         apply=apply,
         norm_scale=scale,

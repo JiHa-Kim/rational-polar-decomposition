@@ -35,22 +35,26 @@ def format_markdown_table(dwh2_path, gns_path):
     ]
 
     output = [
-        "# DWH2 vs GNS Benchmark Comparison\n",
-        "## Metric Definitions\n",
+        "# DWH2 vs GNS Benchmark Comparison",
+        "",
+        "## Metric Definitions",
         "- **Med ms**: Median execution time in milliseconds.",
         r"- **Ortho (Projection Defect)**: Relative Frobenius norm $\|S^2 - S\|_F / \|S\|_F$ where $S = Q^T Q$. Measures how close $Q^T Q$ is to being an idempotent projector.",
         r"- **Supp (Support Residual)**: Relative Frobenius norm $\|(I - S)G\|_F / \|G\|_F$ where $G = A^T A$. Measures how much of the input signal is lost by the approximate projection.",
         r"- **Skew (Symmetry Error)**: Relative Frobenius norm of the skew-symmetric part of $Q^T A$. Measures how far the recovered factor $P = \text{sym}(Q^T A)$ is from being the exact symmetric part.",
         r"- **P2-Err (Gram Reconstruction)**: Relative Frobenius norm $\|P^2 - G\|_F / \|G\|_F$. Measures how well the squared symmetric factor reconstructs the input Gram matrix.",
-        r"- **Rec (Reconstruction Residual)**: Relative Frobenius norm $\|A - QP\|_F / \|A\|_F$. The total error in the polar decomposition $A \approx QP$.\n",
+        r"- **Rec (Reconstruction Residual)**: Relative Frobenius norm $\|A - QP\|_F / \|A\|_F$. The total error in the polar decomposition $A \approx QP$.",
+        "",
     ]
 
     for shape, dtype in all_groups:
-        output.append(f"## Shape: {shape}, Dtype: {dtype}\n")
+        output.append(f"## Shape: {shape}, Dtype: {dtype}")
+        output.append("")
         
         header = ["Case", "Method"] + [m[0] for m in metrics]
-        table = "| " + " | ".join(header) + " |\n"
-        table += "| " + " | ".join(["---"] * len(header)) + " |\n"
+        table_lines = []
+        table_lines.append("| " + " | ".join(header) + " |")
+        table_lines.append("| " + " | ".join(["---"] * len(header)) + " |")
 
         # Organize by case
         d_by_case = {r["case"]: r for r in dwh2_raw.get((shape, dtype), [])}
@@ -86,11 +90,11 @@ def format_markdown_table(dwh2_path, gns_path):
                 d_row.append(ds)
                 g_row.append(gs)
 
-            table += "| " + " | ".join(d_row) + " |\n"
-            table += "| " + " | ".join(g_row) + " |\n"
+            table_lines.append("| " + " | ".join(d_row) + " |")
+            table_lines.append("| " + " | ".join(g_row) + " |")
 
-        output.append(table)
-        output.append("\n")
+        output.append("\n".join(table_lines))
+        output.append("")
 
     return "\n".join(output)
 

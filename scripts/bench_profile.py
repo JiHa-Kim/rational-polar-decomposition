@@ -279,7 +279,7 @@ class RegressionSuite:
         def build_cmd(output_file: str) -> list[str]:
             cmd = [
                 sys.executable,
-                "bench_profile.py",
+                __file__,
                 "--output",
                 output_file,
                 "--quiet",

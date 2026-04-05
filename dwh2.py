@@ -281,24 +281,36 @@ def normalize_small_gram(
     xbuf = workspace.xbuf
     tmp = workspace.tmp
 
+    t1 = torch.linalg.vector_norm(x, dtype=torch.float32).pow(2).to(torch.float64)
+
+    eta_fp16 = 0.0
     # OPTIMIZATION: Single-pass addmm for standard sizes to avoid loop overhead.
     # For m=16k, n=4k, fp32 cast takes 256MB.
     # We use a threshold (e.g., 32768 rows) to decide.
     if m <= 32768:
-        # Fused Single Pass
-        xf = x.float()
-        gram.addmm_(xf.mT, xf, beta=0.0)
-        t1 = torch.sum(xf * xf, dtype=torch.float64)
+        if x.dtype == torch.float16:
+            ratio = (t1 / 32768.0).clamp_min(1.0)
+            if not torch.compiler.is_compiling() and float(ratio.item()) == 1.0:
+                tmp_fp16 = torch.mm(x.mT, x)
+                gram.copy_(tmp_fp16)
+            else:
+                s_t = torch.sqrt(ratio).to(x.dtype)
+                xs = x / s_t
+                tmp_fp16 = torch.mm(xs.mT, xs)
+                gram.copy_(tmp_fp16).mul_(ratio.to(torch.float32))
+            eta_fp16 = float(torch.finfo(torch.float16).eps)
+        else:
+            # Fused Single Pass
+            xf = x.float()
+            gram.addmm_(xf.mT, xf, beta=0.0)
     else:
         # Blocked Loop Fallback
         gram.zero_()
-        t1 = torch.zeros((), device=a.device, dtype=torch.float64)
         for start in range(0, m, workspace.block_rows):
             rows = min(workspace.block_rows, m - start)
             x_rows = x[start : start + rows]
             xbuf[:rows].copy_(x_rows)
             gram.addmm_(xbuf[:rows].mT, xbuf[:rows])
-            t1 += torch.sum(xbuf[:rows] * xbuf[:rows], dtype=torch.float64)
 
     _symmetrize_(gram, scratch)
 
@@ -317,6 +329,7 @@ def normalize_small_gram(
     eta = _gamma(m, eps_val / 2.0)
     if _uses_tf32_matmul():
         eta += 2.0**-10
+    eta += eta_fp16
     eta_t = torch.tensor(float(eta), device=a.device, dtype=torch.float64)
 
     # Note: Baseline used 't1' (stable sum of squares), not 't1_hat'.

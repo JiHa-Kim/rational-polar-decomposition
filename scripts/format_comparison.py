@@ -62,8 +62,8 @@ def format_markdown_table(dwh2_path, gns_path):
         g_med = statistics.median([r["median_ms"] for r in g_recs])
         speedup = g_med / d_med if d_med > 0 else 0
 
-        d_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in d_recs])
-        g_ortho = statistics.mean([r.get("ortho_fro", 0.0) for r in g_recs])
+        d_ortho = statistics.mean([r.get("ortho_proj", 0.0) for r in d_recs])
+        g_ortho = statistics.mean([r.get("ortho_proj", 0.0) for r in g_recs])
 
         d_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in d_recs])
         g_perr = statistics.mean([r.get("p2_gram_rel_fro", 0.0) for r in g_recs])

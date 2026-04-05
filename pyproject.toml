@@ -8,12 +8,12 @@ dependencies = [
     "numpy>=2.4.4",
     "torch>=2.11.0",
     "triton-windows>=3.6.0.post26; sys_platform == 'win32'",
-    "gram-newton-schulz",
     "tqdm>=4.67.3",
 ]
 
 [project.optional-dependencies]
-kernels = [
+baselines = [
+    "gram-newton-schulz",
     "quack-kernels",
 ]
 

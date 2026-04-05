@@ -416,7 +416,6 @@ name = "polar-decomposition"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "gram-newton-schulz" },
     { name = "numpy" },
     { name = "torch" },
     { name = "tqdm" },
@@ -424,20 +423,21 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-kernels = [
+baselines = [
+    { name = "gram-newton-schulz" },
     { name = "quack-kernels" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "gram-newton-schulz", git = "https://github.com/Dao-AILab/gram-newton-schulz?tag=v0.1.0" },
+    { name = "gram-newton-schulz", marker = "extra == 'baselines'", git = "https://github.com/Dao-AILab/gram-newton-schulz?tag=v0.1.0" },
     { name = "numpy", specifier = ">=2.4.4" },
-    { name = "quack-kernels", marker = "extra == 'kernels'", git = "https://github.com/Dao-AILab/quack?tag=v0.3.9" },
+    { name = "quack-kernels", marker = "extra == 'baselines'", git = "https://github.com/Dao-AILab/quack?tag=v0.3.9" },
     { name = "torch", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "triton-windows", marker = "sys_platform == 'win32'", specifier = ">=3.6.0.post26" },
 ]
-provides-extras = ["kernels"]
+provides-extras = ["baselines"]
 
 [[package]]
 name = "quack-kernels"

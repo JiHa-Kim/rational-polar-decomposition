@@ -409,11 +409,22 @@ def make_gns_runner(
     import torch
 
     coefs = _get_gns_coefficients(gns_mod)
-    gns = getattr(gns_mod, "GramNewtonSchulz")(
-        ns_use_kernels=kernel,
-        ns_coefficients=coefs,
-        gram_newton_schulz_reset_iterations=reset,
-    )
+    try:
+        gns = getattr(gns_mod, "GramNewtonSchulz")(
+            ns_use_kernels=kernel,
+            ns_coefficients=coefs,
+            gram_newton_schulz_reset_iterations=reset,
+        )
+    except (ImportError, ModuleNotFoundError, AttributeError, RuntimeError) as e:
+        if kernel:
+            logger.warning(
+                f"[warn] GNS kernels failed to load ({e}). Falling back to pure-torch mode."
+            )
+            return make_gns_runner(
+                gns_mod, kernel=False, reset=reset, entrypoint=entrypoint
+            )
+        logger.error(f"[error] Failed to initialize Gram-Newton-Schulz: {e}")
+        return None
 
     def top_level(x: torch.Tensor) -> torch.Tensor:
         y = gns(x)
@@ -782,17 +793,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--gns-use-kernels",
-        dest="gns_use_kernels",
-        action="store_true",
-        help="Enable upstream optional GNS kernels.",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help="Enable upstream optional GNS kernels (requires quack-kernels).",
     )
-    parser.add_argument(
-        "--gns-no-use-kernels",
-        dest="gns_use_kernels",
-        action="store_false",
-        help="Disable upstream optional GNS kernels.",
-    )
-    parser.set_defaults(gns_use_kernels=True)
     parser.add_argument("--gns-reset-iters", default="2")
     parser.add_argument("--no-gns", action="store_true", help="Skip GNS benchmarks")
     parser.add_argument("--no-dwh2", action="store_true", help="Skip DWH2 benchmarks")

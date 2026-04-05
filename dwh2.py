@@ -510,26 +510,16 @@ def _dwh2_core_impl(
     m0.diagonal().add_(s0.alpha)
     _symmetrize_(m0, scratch)
 
-    # Stable L_prod = H0 K0 via equilibration trick
-    sh.copy_(h0.diagonal())
-    torch.clamp_(sh, min=1e-30)
-    torch.sqrt_(sh)
-    invsh.copy_(sh).reciprocal_()
-
-    h0.mul_(invsh[:, None]).mul_(invsh[None, :])
-    scratch.copy_(k0).mul_(sh[:, None])
-    torch.mm(h0, scratch, out=L)
-    L.mul_(sh[:, None])
-    _symmetrize_(L, scratch)
-
     # Step 2: B1 = I + delta (c0 a0^2 G + 2 a0 b0 K0 + b0^2 L_prod)
     # Scaling Trick for B1:
-    # B1 = c1 * (alpha0^2 G + (2*alpha0*beta0/c0) K0 + (beta0^2/c0) L + 1/c1 I)
+    # B1 = c1 * (alpha0^2 G + (2*alpha0*beta0/c0) K0 + (beta0^2/c0) L_prod + 1/c1 I)
     c1 = delta * s0.c
     buf.copy_(gram).mul_(s0.alpha * s0.alpha)
     buf.add_(k0, alpha=(2.0 * s0.alpha * s0.beta) / s0.c)
-    buf.add_(L, alpha=(s0.beta * s0.beta) / s0.c)
     buf.diagonal().add_(1.0 / c1)
+    
+    # Fused calculation of L_prod = h0 @ k0 and its addition to buf
+    buf.addmm_(h0, k0, alpha=(s0.beta * s0.beta) / s0.c, beta=1.0)
 
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
     L.mul_(math.sqrt(c1))

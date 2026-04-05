@@ -24,7 +24,7 @@ class CholStats:
 @dataclass
 class PolarResult:
     q: torch.Tensor
-    stats: CholStats = field(default_factory=lambda: CholStats())
+    stats: CholStats = field(default_factory=CholStats)
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,6 @@ class DWH2Config:
     gram_block_rows: int = 1024
 
 
-# Default configuration instance
 DEFAULT_CONFIG = DWH2Config()
 
 
@@ -51,31 +50,6 @@ class DWH2Params:
     step0: StepParams
     step1: StepParams
     delta: float
-
-
-def _dwh_coefficients_fp64(ell: float) -> tuple[float, float, float, float]:
-    ell = float(max(min(ell, 1.0), 1e-12))
-    gamma = (4.0 * (1.0 - ell * ell) / (ell**4)) ** (1.0 / 3.0)
-    root = math.sqrt(1.0 + gamma)
-    a = root + 0.5 * math.sqrt(
-        8.0 - 4.0 * gamma + 8.0 * (2.0 - ell * ell) / (ell * ell * root)
-    )
-    b = ((a - 1.0) ** 2) / 4.0
-    c = a + b - 1.0
-    ell_next = ell * (a + b * ell * ell) / (1.0 + c * ell * ell)
-    alpha = b / c
-    beta = a - alpha
-    return float(alpha), float(beta), float(c), float(ell_next)
-
-
-def get_dwh2_params(ell0: float) -> DWH2Params:
-    alpha0, beta0, c0, ell1 = _dwh_coefficients_fp64(float(ell0))
-    alpha1, beta1, c1, _ = _dwh_coefficients_fp64(float(ell1))
-    return DWH2Params(
-        step0=StepParams(alpha=alpha0, beta=beta0, c=c0),
-        step1=StepParams(alpha=alpha1, beta=beta1, c=c1),
-        delta=c1 / c0,
-    )
 
 
 @dataclass
@@ -147,12 +121,39 @@ class DWH2Workspace:
             or k_cast.dtype != self.out_dtype
         ):
             k_cast = torch.empty(
-                (self.n, self.n),
-                device=self.device,
-                dtype=self.out_dtype,
+                (self.n, self.n), device=self.device, dtype=self.out_dtype
             )
             self.k_cast = k_cast
         return k_cast
+
+
+def _dwh_coefficients_fp64(ell: float) -> tuple[float, float, float, float]:
+    ell = float(max(min(ell, 1.0), 1e-12))
+    gamma = (4.0 * (1.0 - ell * ell) / (ell**4)) ** (1.0 / 3.0)
+    root = math.sqrt(1.0 + gamma)
+    a = root + 0.5 * math.sqrt(
+        8.0 - 4.0 * gamma + 8.0 * (2.0 - ell * ell) / (ell * ell * root)
+    )
+    b = ((a - 1.0) ** 2) / 4.0
+    c = a + b - 1.0
+    ell_next = ell * (a + b * ell * ell) / (1.0 + c * ell * ell)
+    alpha = b / c
+    beta = a - alpha
+    return float(alpha), float(beta), float(c), float(ell_next)
+
+
+def get_dwh2_params(ell0: float) -> DWH2Params:
+    alpha0, beta0, c0, ell1 = _dwh_coefficients_fp64(float(ell0))
+    alpha1, beta1, c1, _ = _dwh_coefficients_fp64(float(ell1))
+    return DWH2Params(
+        step0=StepParams(alpha=alpha0, beta=beta0, c=c0),
+        step1=StepParams(alpha=alpha1, beta=beta1, c=c1),
+        delta=c1 / c0,
+    )
+
+
+def _column_space_view(a: torch.Tensor) -> torch.Tensor:
+    return a.mT if a.shape[0] < a.shape[1] else a
 
 
 def _symmetrize_(a: torch.Tensor, scratch: torch.Tensor) -> None:
@@ -194,7 +195,6 @@ def _chol_spd_inplace_ex(
     min_jitter: float = 1e-4,
     max_retries: int = 6,
 ) -> torch.Tensor:
-    n = a.shape[0]
     _symmetrize_(a, scratch)
 
     torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
@@ -202,6 +202,7 @@ def _chol_spd_inplace_ex(
         _update_chol_stats(stats, shifted=False, retries=0, jitter=0.0)
         return L_out
 
+    n = a.shape[0]
     u = float(torch.finfo(a.dtype).eps)
     jitter = max(jitter_scale * n * u, min_jitter)
     a.diagonal().add_(jitter)
@@ -263,7 +264,10 @@ def _tri_inv_lower_inplace(
 
 
 def _spd_inv_from_cholesky(
-    L: torch.Tensor, invA: torch.Tensor, linv: torch.Tensor, work: torch.Tensor
+    L: torch.Tensor,
+    invA: torch.Tensor,
+    linv: torch.Tensor,
+    work: torch.Tensor,
 ) -> None:
     _tri_inv_lower_inplace(L, linv, work, leaf=512)
     torch.mm(linv.mT, linv, out=invA)
@@ -298,12 +302,9 @@ def normalize_small_gram(
     config: DWH2Config = DEFAULT_CONFIG,
     workspace: Optional[DWH2Workspace] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    transposed = a.shape[0] < a.shape[1]
-    x = a.mT if transposed else a
+    x = _column_space_view(a)
     m, n = x.shape
-    device = a.device
-
-    workspace = _ensure_workspace(workspace, n, device, a.dtype, config)
+    workspace = _ensure_workspace(workspace, n, a.device, a.dtype, config)
 
     gram = workspace.gram
     scratch = workspace.scratch
@@ -311,14 +312,13 @@ def normalize_small_gram(
     tmp = workspace.tmp
 
     gram.zero_()
-    t1 = torch.zeros((), device=device, dtype=torch.float64)
+    t1 = torch.zeros((), device=a.device, dtype=torch.float64)
 
-    br = workspace.block_rows
-    for s in range(0, m, br):
-        r = min(br, m - s)
-        xbuf[:r].copy_(x[s : s + r])
-        gram.addmm_(xbuf[:r].mT, xbuf[:r])
-        t1 += torch.sum(xbuf[:r] * xbuf[:r], dtype=torch.float64)
+    for start in range(0, m, workspace.block_rows):
+        rows = min(workspace.block_rows, m - start)
+        xbuf[:rows].copy_(x[start : start + rows])
+        gram.addmm_(xbuf[:rows].mT, xbuf[:rows])
+        t1 += torch.sum(xbuf[:rows] * xbuf[:rows], dtype=torch.float64)
 
     _symmetrize_(gram, scratch)
 
@@ -327,28 +327,24 @@ def normalize_small_gram(
     tmp.mul_(gram)
     t2_hat = torch.sum(tmp, dtype=torch.float64)
 
-    n_t = torch.tensor(float(n), device=device, dtype=torch.float64)
+    n_t = torch.tensor(float(n), device=a.device, dtype=torch.float64)
     rad = torch.clamp_min((n_t * t2_hat) - (t1_hat * t1_hat), 0.0)
     raw_lambda = (t1_hat + torch.sqrt((n_t - 1.0) * rad)) / n_t
 
-    u_acc = float(torch.finfo(torch.float32).eps) / 2.0
-    eta = _gamma(m, u_acc)
+    eta = _gamma(m, float(torch.finfo(torch.float32).eps) / 2.0)
     if _uses_tf32_matmul():
         eta += 2.0**-10
-    eta_t = torch.tensor(float(eta), device=device, dtype=torch.float64)
+    eta_t = torch.tensor(float(eta), device=a.device, dtype=torch.float64)
 
     ub_lambda = torch.clamp_min(raw_lambda + eta_t * t1, 0.0)
-
     denom = torch.sqrt(ub_lambda).to(dtype=torch.float32)
     if config.safety != 1.0:
         denom = denom * float(config.safety)
     denom = denom + float(config.eps)
 
     inv_denom = denom.reciprocal()
-    inv_denom_sq = inv_denom * inv_denom
     scale = inv_denom.to(dtype=a.dtype)
-
-    gram.mul_(inv_denom_sq)
+    gram.mul_(inv_denom * inv_denom)
     return scale, gram
 
 
@@ -360,18 +356,39 @@ def normalize_moment_with_small_gram(
     workspace: Optional[DWH2Workspace] = None,
     inplace: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    scale, gram = normalize_small_gram(
-        a,
-        config=config,
-        workspace=workspace,
-    )
-
+    scale, gram = normalize_small_gram(a, config=config, workspace=workspace)
     if inplace:
         a.mul_(scale)
-        a_norm = a
+        return a, gram
+    return a * scale, gram
+
+
+def _apply_k(
+    a_norm: torch.Tensor,
+    k_final: torch.Tensor,
+    *,
+    workspace: DWH2Workspace,
+    apply: str,
+    norm_scale: Optional[torch.Tensor],
+    transposed: bool,
+    tmp: torch.Tensor,
+) -> torch.Tensor:
+    if apply == "fp16":
+        k_apply = workspace.ensure_k_cast()
+        k_apply.copy_(k_final)
+        if norm_scale is not None:
+            k_apply.mul_(norm_scale.to(device=k_apply.device, dtype=k_apply.dtype))
+        return k_apply @ a_norm if transposed else a_norm @ k_apply
+
+    if norm_scale is not None:
+        tmp.copy_(k_final)
+        tmp.mul_(norm_scale.to(device=tmp.device, dtype=tmp.dtype))
+        k_apply = tmp
     else:
-        a_norm = a * scale
-    return a_norm, gram
+        k_apply = k_final
+
+    x = a_norm.float()
+    return k_apply @ x if transposed else x @ k_apply
 
 
 def _dwh2_core_impl(
@@ -438,7 +455,6 @@ def _dwh2_core_impl(
     buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
     buf.add_(rhs, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
-
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
     rhs.copy_(m0.mT)
@@ -450,24 +466,15 @@ def _dwh2_core_impl(
     k_final.add_(tmp, alpha=s1.beta)
     _symmetrize_(k_final, scratch)
 
-    if apply == "fp16":
-        k_cast = workspace.ensure_k_cast()
-        k_cast.copy_(k_final)
-        if norm_scale is not None:
-            k_cast.mul_(norm_scale.to(device=k_cast.device, dtype=k_cast.dtype))
-        if transposed:
-            return k_cast @ a_norm
-        return a_norm @ k_cast
-
-    if norm_scale is not None:
-        tmp.copy_(k_final)
-        tmp.mul_(norm_scale.to(device=tmp.device, dtype=tmp.dtype))
-        k_apply = tmp
-    else:
-        k_apply = k_final
-    if transposed:
-        return k_apply @ a_norm.float()
-    return a_norm.float() @ k_apply
+    return _apply_k(
+        a_norm,
+        k_final,
+        workspace=workspace,
+        apply=apply,
+        norm_scale=norm_scale,
+        transposed=transposed,
+        tmp=tmp,
+    )
 
 
 @torch.no_grad()
@@ -505,7 +512,7 @@ def dwh2_core(
     norm_scale: Optional[torch.Tensor] = None,
 ) -> PolarResult:
     stats = CholStats()
-    y = _dwh2_core_impl(
+    q = _dwh2_core_impl(
         a_norm,
         gram_norm,
         config=config,
@@ -515,7 +522,7 @@ def dwh2_core(
         norm_scale=norm_scale,
         stats=stats,
     )
-    return PolarResult(q=y, stats=stats)
+    return PolarResult(q=q, stats=stats)
 
 
 @torch.no_grad()
@@ -526,14 +533,10 @@ def dwh2_end_to_end(
     workspace: Optional[DWH2Workspace] = None,
     apply: str = "fp16",
 ) -> PolarResult:
-    n = int(min(a.shape))
-    workspace = _ensure_workspace(workspace, n, a.device, a.dtype, config)
-
-    scale, gram_norm = normalize_small_gram(
-        a,
-        config=config,
-        workspace=workspace,
+    workspace = _ensure_workspace(
+        workspace, int(min(a.shape)), a.device, a.dtype, config
     )
+    scale, gram_norm = normalize_small_gram(a, config=config, workspace=workspace)
     return dwh2_core(
         a,
         gram_norm,

@@ -163,7 +163,7 @@ class MetricsSuite:
         H = workspace.buf
         xbuf = workspace.xbuf
         scratch = workspace.scratch
-        tmp = workspace.tmp
+        tmp = workspace.h0
         qbuf = cls._get_metric_qbuf(workspace)
 
         S.zero_()

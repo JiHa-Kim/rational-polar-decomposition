@@ -291,7 +291,7 @@ class RegressionSuite:
         return f"{color}{val * 100:>+7.1f}%{reset}"
 
     @staticmethod
-    def check(baseline_path, current_path, time_thresh=0.05, metric_thresh=0.01):
+    def check(baseline_path, current_path, time_thresh=0.05, metric_thresh=0.01) -> bool:
         from collections import defaultdict
 
         def load(p):
@@ -319,6 +319,7 @@ class RegressionSuite:
         )
         print("-" * 88)
 
+        all_passed = True
         for k in all_keys:
             if k not in base or k not in curr:
                 continue
@@ -348,12 +349,16 @@ class RegressionSuite:
             o_delta = RegressionSuite._color_diff(ortho_diff, False)
             p_delta = RegressionSuite._color_diff(perr_diff, False)
 
+            if ortho_diff > metric_thresh or perr_diff > metric_thresh:
+                all_passed = False
+
             print(
                 f"{k[0]:<6} {k[1]:<16} {k[2]:<12} {s_delta:<23} {o_delta:<23} {p_delta:<23}"
             )
+        return all_passed
 
     @staticmethod
-    def summarize(path, baseline=None):
+    def summarize(path, baseline=None) -> bool:
         if baseline:
             # Check if baseline is a git revision
             import subprocess
@@ -377,10 +382,8 @@ class RegressionSuite:
                     subprocess.run(["git", "checkout", baseline, "--", "dwh2.py"], check=True)
                     
                     # 3. Run benchmark for baseline
-                    # We use a sub-process to avoid module caching issues
                     import sys
                     cmd = [sys.executable, "bench_profile.py", "--output", baseline_json, "--no-metrics", "--quiet"]
-                    # Forward relevant args (this is a bit simplified)
                     for arg in sys.argv[1:]:
                         if arg not in ["--baseline", baseline, "--output"]:
                             cmd.append(arg)
@@ -389,8 +392,7 @@ class RegressionSuite:
                     subprocess.run(cmd, check=True)
                     
                     # 4. Compare
-                    RegressionSuite.check(baseline_json, path)
-                    return
+                    return RegressionSuite.check(baseline_json, path)
                 finally:
                     # 5. Restore current code
                     with open("dwh2.py", "w") as f:
@@ -398,8 +400,7 @@ class RegressionSuite:
                     if os.path.exists(baseline_json):
                         os.remove(baseline_json)
             elif os.path.exists(baseline):
-                RegressionSuite.check(baseline, path)
-                return
+                return RegressionSuite.check(baseline, path)
 
         from collections import defaultdict
 
@@ -412,7 +413,7 @@ class RegressionSuite:
                         k = (r["method"], r["case"], r["shape"], r["dtype"])
                         res[k].append(r)
         except Exception:
-            return
+            return True
 
         print(
             f"\n{'Method':<6} {'Case':<20} {'Shape':<12} {'Med (ms)':<10} {'Ortho (F)':<12} {'P-Err (F)':<12}"
@@ -425,6 +426,7 @@ class RegressionSuite:
             print(
                 f"{k[0]:<6} {k[1]:<20} {k[2]:<12} {m_ms:<10.4f} {o_fro:<12.2e} {p_err:<12.2e}"
             )
+        return True
 
 
 def import_gns(gns_path: str):
@@ -484,7 +486,7 @@ def make_gns_runner(gns_mod, kernel: bool, reset: list[int]):
     return core
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> bool:
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--no-tf32", action="store_true")
@@ -722,25 +724,28 @@ def main(argv: list[str] | None = None) -> None:
     if args.no_gns and args.load_gns and os.path.exists(args.load_gns):
         logger.info(f"[merge] GNS results available at {args.load_gns}")
 
-    RegressionSuite.summarize(args.output, baseline=args.baseline)
+    return RegressionSuite.summarize(args.output, baseline=args.baseline)
 
 
 def main_hard() -> None:
-    # Prepend defaults so that user-provided arguments can override them
-    defaults = [
-        "--no-gns",
-        "--hard",
-        "--trials",
-        "10",
-        "--warmup",
-        "2",
-        "--seeds",
-        "0",
-    ]
+    # 1. No-compile pass for fast regression check
+    defaults = ["--no-gns", "--hard", "--trials", "5", "--warmup", "1", "--seeds", "0", "--no-compile", "--output", "hard_no_compile.jsonl"]
     if os.path.exists("baseline.jsonl"):
         defaults.extend(["--baseline", "baseline.jsonl"])
-
-    main(defaults + sys.argv[1:])
+    
+    print(">>> Phase 1: Fast no-compile regression check")
+    passed = main(defaults)
+    if not passed:
+        print("!!! Regression detected in Phase 1. Aborting.")
+        sys.exit(1)
+    
+    # 2. Compile pass for meaningful performance comparison
+    print(">>> Phase 2: Full compiled performance comparison")
+    defaults_comp = ["--no-gns", "--hard", "--trials", "10", "--warmup", "2", "--seeds", "0", "--compile", "--output", "hard_compile.jsonl"]
+    if os.path.exists("baseline.jsonl"):
+        defaults_comp.extend(["--baseline", "baseline.jsonl"])
+    
+    main(defaults_comp + sys.argv[1:])
 
 
 def main_baseline() -> None:

@@ -29,7 +29,7 @@ class PolarResult:
 
 @dataclass(frozen=True)
 class DWH2Config:
-    ell0: float = 1e-3
+    ell0: float = 1e-7
     eps: float = 1e-7
     safety: float = 1.01
     gram_block_rows: int = 1024
@@ -196,51 +196,52 @@ def _chol_spd_inplace_ex(
     n = a.shape[0]
     u = float(torch.finfo(a.dtype).eps)
     jitter = max(jitter_scale * n * u, min_jitter)
+    
+    # Equilibrate: D^-1 A D^-1
+    d = torch.clamp(a.diagonal(), min=1e-30).sqrt()
+    inv_d = d.reciprocal()
+    a.mul_(inv_d[:, None]).mul_(inv_d[None, :])
+    
     a.diagonal().add_(jitter)
     torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
+    if int(info_out.item()) == 0:
+        _update_chol_stats(stats, shifted=False, retries=0, jitter=jitter)
+        L_out.mul_(d[:, None])
+        return L_out
+        
+    retries = 1
+    step = jitter * 10.0
+    while int(info_out.item()) != 0 and retries <= max_retries:
+        a.diagonal().add_(step)
+        jitter += step
+        torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
+        if int(info_out.item()) == 0:
+            _update_chol_stats(stats, shifted=True, retries=retries, jitter=jitter)
+            L_out.mul_(d[:, None])
+            return L_out
+        retries += 1
+        step *= 10.0
+        
+    # Final fallback if all retries fail
+    a.diagonal().add_(0.1)
+    jitter += 0.1
+    torch.linalg.cholesky_ex(a, check_errors=False, out=(L_out, info_out))
+    _update_chol_stats(stats, shifted=True, retries=retries, jitter=jitter)
+    
+    # Map back: L_out = D L_out
+    L_out.mul_(d[:, None])
     return L_out
-
-
-def _tri_inv_lower_inplace(
-    L: torch.Tensor, out: torch.Tensor, work: torch.Tensor, leaf: int = 512
-) -> None:
-    n = L.shape[0]
-    if n <= leaf:
-        out.zero_()
-        out.diagonal().fill_(1.0)
-        torch.linalg.solve_triangular(L, out, upper=False, left=True, out=out)
-        return
-
-    k = n // 2
-    A = L[:k, :k]
-    C = L[k:, :k]
-    D = L[k:, k:]
-
-    outA = out[:k, :k]
-    outC = out[k:, :k]
-    outD = out[k:, k:]
-
-    workA = work[:k, :k]
-    workC = work[k:, :k]
-    workD = work[k:, k:]
-
-    _tri_inv_lower_inplace(A, outA, workA, leaf=leaf)
-    _tri_inv_lower_inplace(D, outD, workD, leaf=leaf)
-
-    torch.mm(outD, C, out=workC)
-    torch.mm(workC, outA, out=outC)
-    outC.mul_(-1.0)
-    out[:k, k:].zero_()
 
 
 def _spd_inv_from_cholesky(
     L: torch.Tensor,
     invA: torch.Tensor,
-    linv: torch.Tensor,
     work: torch.Tensor,
 ) -> None:
-    _tri_inv_lower_inplace(L, linv, work, leaf=512)
-    torch.mm(linv.mT, linv, out=invA)
+    invA.zero_()
+    invA.diagonal().fill_(1.0)
+    torch.linalg.solve_triangular(L, invA, upper=False, left=True, out=invA)
+    torch.linalg.solve_triangular(L.mT, invA, upper=True, left=True, out=invA)
 
 
 def _ensure_workspace(
@@ -315,9 +316,8 @@ def normalize_small_gram(
     _symmetrize_(gram, scratch)
 
     t1_hat = torch.sum(gram.diagonal(), dtype=torch.float64)
-    tmp.copy_(gram)
-    tmp.mul_(gram)
-    t2_hat = torch.sum(tmp, dtype=torch.float64)
+    # Safely compute Frobenius norm squared in float64
+    t2_hat = torch.sum(gram.to(dtype=torch.float64).pow(2))
 
     # Spectral radius estimation (Stable kernel from baseline)
     n_t = torch.tensor(float(n), device=a.device, dtype=torch.float64)
@@ -342,6 +342,9 @@ def normalize_small_gram(
     inv_denom = denom.reciprocal()
     scale = inv_denom.to(dtype=a.dtype)
     gram.mul_(inv_denom * inv_denom)
+    # Stability jitter: ensure G is strictly PSD for subsequent steps
+    u = float(torch.finfo(torch.float32).eps)
+    gram.diagonal().add_(u, alpha=float(n))
     return scale, gram
 
 
@@ -417,6 +420,44 @@ def _apply_k(
     return k_apply @ x if transposed else x @ k_apply
 
 
+def _compute_gram_blocked(
+    x: torch.Tensor,
+    m_mat: Optional[torch.Tensor],
+    *,
+    workspace: DWH2Workspace,
+    out: torch.Tensor,
+) -> torch.Tensor:
+    # Computes G = (X M)^T (X M) if m_mat is not None, else X^T X
+    # x: (m, n), m_mat: (n, n), out: (n, n)
+    m, n = x.shape
+    out.zero_()
+    
+    # We use float32 for these matmuls to ensure precision and use TF32 speedup.
+    # The memory cost for 16k x 4k float32 is 256MB, which is acceptable.
+    
+    if m <= 32768:
+        if m_mat is not None:
+            # Y = X.float() @ M.float()
+            y = torch.mm(x.float(), m_mat.float())
+            out.addmm_(y.mT, y)
+        else:
+            xf = x.float()
+            out.addmm_(xf.mT, xf)
+        return out
+
+    # Blocked fallback for truly huge matrices
+    for start in range(0, m, workspace.block_rows):
+        rows = min(workspace.block_rows, m - start)
+        x_rows = x[start : start + rows].float()
+        
+        if m_mat is not None:
+            y = torch.mm(x_rows, m_mat.float())
+            out.addmm_(y.mT, y)
+        else:
+            out.addmm_(x_rows.mT, x_rows)
+    return out
+
+
 def _dwh2_core_impl(
     a_norm: torch.Tensor,
     gram_norm: torch.Tensor,
@@ -447,35 +488,43 @@ def _dwh2_core_impl(
 
     gram.copy_(gram_norm)
 
-    buf.copy_(gram).mul_(s0.c)
-    buf.diagonal().add_(1.0)
+    # Step 1: B0 = I + c0 G
+    # Scaling Trick: chol(1/c0 I + G)
+    buf.copy_(gram)
+    buf.diagonal().add_(1.0 / s0.c)
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
+    L.mul_(math.sqrt(s0.c))
 
-    _spd_inv_from_cholesky(L, h0, k_final, scratch)
+    _spd_inv_from_cholesky(L, h0, scratch)
     _symmetrize_(h0, scratch)
 
-    k0.copy_(h0).mul_(-1.0)
-    k0.diagonal().add_(1.0)
+    # Stable K0 = H0 * (c0 G)
+    scratch.copy_(gram).mul_(s0.c)
+    torch.mm(h0, scratch, out=k0)
+    _symmetrize_(k0, scratch)
 
     m0.copy_(h0).mul_(s0.beta)
     m0.diagonal().add_(s0.alpha)
     _symmetrize_(m0, scratch)
 
+    # Stable L_prod = H0 K0 via equilibration trick
     sh.copy_(h0.diagonal())
     torch.clamp_(sh, min=1e-30)
     torch.sqrt_(sh)
     invsh.copy_(sh).reciprocal_()
 
     h0.mul_(invsh[:, None]).mul_(invsh[None, :])
-    # Note: L is derived from gram + shifts; scratch is free for mm intermediate
     scratch.copy_(k0).mul_(sh[:, None])
     torch.mm(h0, scratch, out=L)
     L.mul_(sh[:, None])
+    _symmetrize_(L, scratch)
 
+    # Step 2: B1 = I + delta (c0 a0^2 G + 2 a0 b0 K0 + b0^2 L_prod)
     buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
     buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
     buf.add_(L, alpha=delta * (s0.beta * s0.beta))
     buf.diagonal().add_(1.0)
+    
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
     scratch.copy_(m0.mT)

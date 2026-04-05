@@ -340,7 +340,6 @@ def stage_profile(
     tmp = ws.tmp
     rhs = ws.rhs
     k_final = ws.k_final
-    linv = ws.linv
     sh = ws.sh
     invsh = ws.invsh
     L = ws.L
@@ -361,7 +360,7 @@ def stage_profile(
         ]
     )
 
-    dwh2._spd_inv_from_cholesky(L, h0, linv, rhs)
+    dwh2._spd_inv_from_cholesky(L, h0, rhs)
     dwh2._symmetrize_(h0, scratch)
     summaries.append(summarize_tensor("h0", h0, eigs=eigs))
 

@@ -465,7 +465,7 @@ def _dwh2_core_impl(
     buf.diagonal().add_(1.0)
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
 
-    _spd_inv_from_cholesky(L, h0, tmp, scratch)
+    _spd_inv_from_cholesky(L, h0, k_final, scratch)
     _symmetrize_(h0, scratch)
 
     k0.copy_(h0).mul_(-1.0)

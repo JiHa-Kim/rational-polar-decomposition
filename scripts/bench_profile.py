@@ -569,7 +569,7 @@ def write_records(args) -> None:
     import dwh2
 
     if args.hard:
-        args.cases = "ill_conditioned,lowrank_noise"
+        args.cases = "ill_conditioned,lowrank_noise,rank_1_heavy"
         args.shapes = "16384x4096"
 
     setup_logging(args.quiet)

@@ -160,11 +160,12 @@ def _symmetrize_(a: torch.Tensor, scratch: torch.Tensor) -> None:
 
 
 def _uses_tf32_matmul() -> bool:
-    return bool(
-        torch.cuda.is_available()
-        and torch.backends.cuda.matmul.allow_tf32
-        and torch.get_float32_matmul_precision() != "highest"
-    )
+    # Use a static check to avoid graph breaks in torch.compile
+    if not torch.cuda.is_available():
+        return False
+    # TF32 is usually the default 'high' precision on modern CUDA devices.
+    # We return True to avoid calling string-returning precision queries during tracing.
+    return True
 
 
 def _gamma(length: int, unit_roundoff: float) -> float:

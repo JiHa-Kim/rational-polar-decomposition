@@ -500,9 +500,9 @@ def _dwh2_core_impl(
     _spd_inv_from_cholesky(L, h0, scratch)
     _symmetrize_(h0, scratch)
 
-    # Stable K0 = H0 * (c0 G)
-    scratch.copy_(gram).mul_(s0.c)
-    torch.mm(h0, scratch, out=k0)
+    # Stable K0 = I - H0
+    k0.copy_(h0).mul_(-1.0)
+    k0.diagonal().add_(1.0)
     _symmetrize_(k0, scratch)
 
     m0.copy_(h0).mul_(s0.beta)
@@ -522,13 +522,16 @@ def _dwh2_core_impl(
     _symmetrize_(L, scratch)
 
     # Step 2: B1 = I + delta (c0 a0^2 G + 2 a0 b0 K0 + b0^2 L_prod)
-    buf.copy_(gram).mul_(delta * s0.c * (s0.alpha * s0.alpha))
-    buf.add_(k0, alpha=delta * 2.0 * s0.alpha * s0.beta)
-    buf.add_(L, alpha=delta * (s0.beta * s0.beta))
-    buf.diagonal().add_(1.0)
+    # Scaling Trick for B1:
+    # B1 = c1 * (alpha0^2 G + (2*alpha0*beta0/c0) K0 + (beta0^2/c0) L + 1/c1 I)
+    c1 = delta * s0.c
+    buf.copy_(gram).mul_(s0.alpha * s0.alpha)
+    buf.add_(k0, alpha=(2.0 * s0.alpha * s0.beta) / s0.c)
+    buf.add_(L, alpha=(s0.beta * s0.beta) / s0.c)
+    buf.diagonal().add_(1.0 / c1)
 
     L = _chol_spd_inplace_ex(buf, stats, scratch=scratch, L_out=L, info_out=info)
-
+    L.mul_(math.sqrt(c1))
     scratch.copy_(m0.mT)
     torch.linalg.solve_triangular(L, scratch, upper=False, left=True, out=scratch)
     torch.linalg.solve_triangular(L.mT, scratch, upper=True, left=True, out=scratch)

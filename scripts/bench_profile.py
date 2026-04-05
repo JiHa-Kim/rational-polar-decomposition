@@ -430,7 +430,9 @@ def parse_shapes(raw: str) -> list[tuple[int, int, str]]:
 
 
 def method_specs(args, dwh2_mod, gns_core):
-    methods = [("dwh2", dwh2_mod.dwh2_core_q, dwh2_mod.dwh2_core)]
+    methods = []
+    if not args.no_dwh2:
+        methods.append(("dwh2", dwh2_mod.dwh2_core_q, dwh2_mod.dwh2_core))
     if not args.no_gns and gns_core is not None:
         methods.append(("gns", gns_core, None))
     return methods
@@ -696,7 +698,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gns-path", default="")
     parser.add_argument("--gns-use-kernels", action="store_true")
     parser.add_argument("--gns-reset-iters", default="2")
-    parser.add_argument("--no-gns", action="store_true")
+    parser.add_argument("--no-gns", action="store_true", help="Skip GNS benchmarks")
+    parser.add_argument("--no-dwh2", action="store_true", help="Skip DWH2 benchmarks")
     parser.add_argument("--load-gns", type=str, default="stable/gns_baseline.jsonl")
     return parser
 

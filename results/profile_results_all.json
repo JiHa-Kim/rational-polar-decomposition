@@ -23,59 +23,54 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 1.0756354331970215,
-        "diag_min": 0.9787254333496094,
+        "diag_max": 1.0756416320800781,
+        "diag_min": 0.9787216186523438,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.999873697757721,
-      "fp16_ortho_to_proj_rel": 0.006913473829627037,
-      "fp16_p2_gram_rel": 0.39289194345474243,
-      "fp16_p_finite": true,
-      "fp16_p_skew_rel": 0.3389049768447876,
-      "fp16_polar_alignment_rel": 0.35111671686172485,
-      "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          521.7962036132812,
-          1.3320516347885132
-        ],
-        "ell0": 0.001,
-        "retries": 1,
-        "s_c_log": [
-          0.0,
-          0.0
-        ],
-        "theta": 0.5
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.999873697757721,
-      "fp32_ortho_to_proj_rel": 0.006915352772921324,
-      "fp32_p2_gram_rel": 0.3930130898952484,
+      "fp16_ortho_proj": NaN,
+      "fp16_ortho_supp": NaN,
+      "fp16_p2_gram_rel_fro": NaN,
+      "fp16_p_finite": false,
+      "fp16_p_skew_rel_fro": NaN,
+      "fp16_proj_defect_rel": NaN,
+      "fp16_proj_gap_rel": NaN,
+      "fp16_q_finite": false,
+      "fp16_rec_resid": NaN,
+      "fp16_s_finite": false,
+      "fp16_stable_rank": 1.0000042265831208,
+      "fp16_support_resid_rel": NaN,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp32_ortho_proj": 45.903614476909425,
+      "fp32_ortho_supp": 6.697669637105336,
+      "fp32_p2_gram_rel_fro": 16.253009482813173,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.3390001654624939,
-      "fp32_polar_alignment_rel": 0.35122984647750854,
+      "fp32_p_negative_mass_rel": 0.4246496273470156,
+      "fp32_p_skew_rel_fro": 0.977547219799469,
+      "fp32_proj_defect_rel": 45.898826599121094,
+      "fp32_proj_gap_rel": 46.895328521728516,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          521.7962036132812,
-          1.3320516347885132
-        ],
-        "ell0": 0.001,
-        "retries": 1,
-        "s_c_log": [
-          0.0,
-          0.0
-        ],
-        "theta": 0.5
-      },
+      "fp32_rec_resid": 22.729127880021075,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 1.0000042265831208,
+      "fp32_support_resid_rel": 6.697029113769531,
       "gram_has_finite": true,
       "gram_stable_rank": 1.0000042265831208,
       "projector_lambda_max": 0.9783841457317922,
       "projector_lambda_min": -3.030742885830796e-07,
       "projector_rank": 1,
       "projector_tau": 9.783841457317923e-06,
-      "q16_vs_q32_rel_fro": 0.0022329208441078663
+      "q16_vs_q32_rel_fro": NaN
     },
     "summaries": [
       {
@@ -247,34 +242,74 @@
         "trace": 1031913.9023132324
       },
       {
-        "abs_max": 0.0018760268576443195,
-        "abs_mean": 4.790244020114187e-06,
-        "diag_max": 0.0007496068719774485,
-        "diag_min": -0.0004629812901839614,
+        "abs_max": 1.0001888275146484,
+        "abs_mean": 0.9998804330825806,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 0.04996003955602646,
+        "fro": 63.992347717285156,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 1.00176203250885,
+        "abs_mean": 1.000119686126709,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 64.00765991210938,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.0018758331425487995,
+        "abs_mean": 4.789659215020947e-06,
+        "diag_max": 0.0007488003466278315,
+        "diag_min": -0.00046298769302666187,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 0.04995891824364662,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 0.2166781096362929,
-        "sym_rel_fro": 0.0,
-        "trace": -0.023255748006378585
+        "stable_rank": 0.21738232683951872,
+        "sym_rel_fro": 0.005780983716249466,
+        "trace": -0.023292984893496883
       },
       {
-        "abs_max": 1.0756354331970215,
-        "abs_mean": 0.0023394348099827766,
-        "diag_max": 1.0756354331970215,
-        "diag_min": 0.9787254333496094,
+        "abs_max": 1.0756416320800781,
+        "abs_mean": 0.0023396036121994257,
+        "diag_max": 1.0756416320800781,
+        "diag_min": 0.9787216186523438,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 65.60517120361328,
+        "fro": 65.60528564453125,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -284,18 +319,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3920.967136904086,
+        "stable_rank": 3920.950000610406,
         "sym_rel_fro": 0.0,
-        "trace": 4108.040266931057
+        "trace": 4108.038276314735
       },
       {
-        "abs_max": 1.0295048952102661,
-        "abs_mean": 0.0005971371429041028,
-        "diag_max": 1.0295048952102661,
-        "diag_min": 0.9395432472229004,
+        "abs_max": 1.029485821723938,
+        "abs_mean": 0.0005971019272692502,
+        "diag_max": 1.029485821723938,
+        "diag_min": 0.9397795796394348,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 64.093994140625,
+        "fro": 64.09397888183594,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -305,18 +340,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4079.126091995839,
-        "sym_rel_fro": 0.09027004987001419,
-        "trace": 4093.557721734047
+        "stable_rank": 4079.1416379177463,
+        "sym_rel_fro": 0.09022867679595947,
+        "trace": 4093.564531624317
       },
       {
-        "abs_max": 16675.6015625,
-        "abs_mean": 2.0363857746124268,
-        "diag_max": 16675.6015625,
-        "diag_min": 243.3688507080078,
+        "abs_max": 16400.37890625,
+        "abs_mean": 2.0036041736602783,
+        "diag_max": 16400.37890625,
+        "diag_min": 243.36961364746094,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 38822.48046875,
+        "fro": 38292.1875,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -326,18 +361,18 @@
           4096,
           4096
         ],
-        "stable_rank": 757.2713633460195,
-        "sym_rel_fro": 0.00015134987188503146,
-        "trace": 1068338.8625183105
+        "stable_rank": 777.5408253738974,
+        "sym_rel_fro": 0.00017181182920467108,
+        "trace": 1067755.4695129395
       },
       {
-        "abs_max": 101066.59375,
-        "abs_mean": 12.360773086547852,
-        "diag_max": 101066.59375,
-        "diag_min": 1619.9747314453125,
+        "abs_max": 99400.9765625,
+        "abs_mean": 12.162393569946289,
+        "diag_max": 99400.9765625,
+        "diag_min": 1619.979248046875,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 239160.390625,
+        "fro": 236006.140625,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -347,18 +382,18 @@
           4096,
           4096
         ],
-        "stable_rank": 873.6705415985333,
+        "stable_rank": 896.2840000786381,
         "sym_rel_fro": 0.0,
-        "trace": 7069083.337280273
+        "trace": 7065552.696655273
       },
       {
-        "abs_max": 0.002054853830486536,
-        "abs_mean": 6.432410737033933e-05,
+        "abs_max": 0.1775047481060028,
+        "abs_mean": 0.000329385744407773,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 0.8529664278030396,
+        "fro": 6.873632907867432,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -373,18 +408,18 @@
         "trace": null
       },
       {
-        "abs_max": 0.00205230712890625,
-        "abs_mean": 6.433115777326748e-05,
+        "abs_max": 0.04803466796875,
+        "abs_mean": 0.00032335540163330734,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float16",
-        "finite": true,
-        "fro": 0.8530333042144775,
-        "inf_count": 0,
+        "finite": false,
+        "fro": 5.190700054168701,
+        "inf_count": 16374,
         "max_eig": null,
         "min_eig": null,
         "name": "q_apply_fp16",
-        "nan_count": 0,
+        "nan_count": 10,
         "shape": [
           16384,
           4096
@@ -419,63 +454,59 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 1.0756577253341675,
-        "diag_min": 0.9787383079528809,
+        "diag_max": 1.075565218925476,
+        "diag_min": 0.97873455286026,
         "info_after_shift": 0,
-        "info_before_shift": 4078,
+        "info_before_shift": 4079,
         "max_jitter": 0.0107421875,
         "shifted_calls": 1,
         "total_retries": 2
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.9990746378898621,
-      "fp16_ortho_to_proj_rel": 0.03385001793503761,
-      "fp16_p2_gram_rel": 0.7328423857688904,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0107421875,
+        "shifted_calls": 1,
+        "total_retries": 2
+      },
+      "fp16_ortho_proj": 71.83938139294725,
+      "fp16_ortho_supp": 8.906892003226968,
+      "fp16_p2_gram_rel_fro": 19.561274781128496,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 1.4406923055648804,
-      "fp16_polar_alignment_rel": 0.9756966233253479,
+      "fp16_p_negative_mass_rel": 0.4140643473881778,
+      "fp16_p_skew_rel_fro": 0.9712293969855474,
+      "fp16_proj_defect_rel": 71.83695220947266,
+      "fp16_proj_gap_rel": 89.60950469970703,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          5.288524150848389,
-          1.344501256942749
-        ],
-        "ell0": 0.001,
-        "retries": 1,
-        "s_c_log": [
-          0.0,
-          0.0
-        ],
-        "theta": 0.5
+      "fp16_rec_resid": 27.990782095067804,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 1.0000079251225915,
+      "fp16_support_resid_rel": 8.906453132629395,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0107421875,
+        "shifted_calls": 1,
+        "total_retries": 2
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.9989721775054932,
-      "fp32_ortho_to_proj_rel": 0.017355527728796005,
-      "fp32_p2_gram_rel": 0.3857307434082031,
+      "fp32_ortho_proj": 97.05767066680485,
+      "fp32_ortho_supp": 5.476894509717937,
+      "fp32_p2_gram_rel_fro": 11.605117537281952,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.34630146622657776,
-      "fp32_polar_alignment_rel": 0.3416522741317749,
+      "fp32_p_negative_mass_rel": 0.41234788448419246,
+      "fp32_p_skew_rel_fro": 0.9701924723473621,
+      "fp32_proj_defect_rel": 97.05533599853516,
+      "fp32_proj_gap_rel": 98.49490356445312,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          5.288524150848389,
-          1.344501256942749
-        ],
-        "ell0": 0.001,
-        "retries": 1,
-        "s_c_log": [
-          0.0,
-          0.0
-        ],
-        "theta": 0.5
-      },
+      "fp32_rec_resid": 27.469780698122587,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 1.0000079251225915,
+      "fp32_support_resid_rel": 5.476356029510498,
       "gram_has_finite": true,
       "gram_stable_rank": 1.0000079251225915,
       "projector_lambda_max": 0.9783841805311442,
       "projector_lambda_min": -2.19425841441061e-07,
       "projector_rank": 1,
       "projector_tau": 9.783841805311443e-06,
-      "q16_vs_q32_rel_fro": 0.5236335396766663
+      "q16_vs_q32_rel_fro": 0.6919726729393005
     },
     "summaries": [
       {
@@ -647,34 +678,74 @@
         "trace": 1031904.6406555176
       },
       {
-        "abs_max": 0.0018662072252482176,
-        "abs_mean": 4.793610060005449e-06,
-        "diag_max": 0.0008121975697577,
-        "diag_min": -0.0004408876702655107,
+        "abs_max": 1.0001887083053589,
+        "abs_mean": 0.9998759031295776,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 0.05004077032208443,
+        "fro": 63.992061614990234,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 1.0017619132995605,
+        "abs_mean": 1.000124216079712,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 64.00794982910156,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.0018660847563296556,
+        "abs_mean": 4.7930225264281034e-06,
+        "diag_max": 0.0008122001308947802,
+        "diag_min": -0.0004408997774589807,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 0.050040148198604584,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 0.07419634788650643,
-        "sym_rel_fro": 0.0,
-        "trace": 0.01363060872370371
+        "stable_rank": 0.07368667072955233,
+        "sym_rel_fro": 0.005760359112173319,
+        "trace": 0.013583542185004363
       },
       {
-        "abs_max": 1.0863999128341675,
-        "abs_mean": 0.0023421617224812508,
-        "diag_max": 1.0863999128341675,
-        "diag_min": 0.9894804954528809,
+        "abs_max": 1.086307406425476,
+        "abs_mean": 0.0023423321545124054,
+        "diag_max": 1.086307406425476,
+        "diag_min": 0.98947674036026,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 66.30846405029297,
+        "fro": 66.30856323242188,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -684,18 +755,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3924.650233695877,
+        "stable_rank": 3924.633267445509,
         "sym_rel_fro": 0.0,
-        "trace": 4154.0282989144325
+        "trace": 4154.025777220726
       },
       {
-        "abs_max": 1.0345534086227417,
-        "abs_mean": 0.0005983191658742726,
-        "diag_max": 1.0345534086227417,
-        "diag_min": 0.9399381875991821,
+        "abs_max": 1.0345326662063599,
+        "abs_mean": 0.0005982998991385102,
+        "diag_max": 1.0345326662063599,
+        "diag_min": 0.9406443238258362,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 64.45175170898438,
+        "fro": 64.45172882080078,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -705,18 +776,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4079.457408701474,
-        "sym_rel_fro": 0.0893687978386879,
-        "trace": 4116.57409632206
+        "stable_rank": 4079.468393626197,
+        "sym_rel_fro": 0.08933943510055542,
+        "trace": 4116.578393697739
       },
       {
-        "abs_max": 14590.5966796875,
-        "abs_mean": 1.787052869796753,
-        "diag_max": 14590.5966796875,
-        "diag_min": 241.37632751464844,
+        "abs_max": 14417.3994140625,
+        "abs_mean": 1.7662124633789062,
+        "diag_max": 14417.3994140625,
+        "diag_min": 241.37594604492188,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 34739.8671875,
+        "fro": 34412.56640625,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -726,18 +797,18 @@
           4096,
           4096
         ],
-        "stable_rank": 917.6302396562542,
-        "sym_rel_fro": 0.00018036282563116401,
-        "trace": 1052354.300857544
+        "stable_rank": 934.5144725146779,
+        "sym_rel_fro": 0.00016597387730143964,
+        "trace": 1051986.2755737305
       },
       {
-        "abs_max": 88448.3359375,
-        "abs_mean": 10.851883888244629,
-        "diag_max": 88448.3359375,
-        "diag_min": 1607.9932861328125,
+        "abs_max": 87400.1640625,
+        "abs_mean": 10.725768089294434,
+        "diag_max": 87400.1640625,
+        "diag_min": 1607.990966796875,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 214870.59375,
+        "fro": 212931.296875,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -747,18 +818,18 @@
           4096,
           4096
         ],
-        "stable_rank": 1052.9389840023857,
+        "stable_rank": 1071.5209265953745,
         "sym_rel_fro": 0.0,
-        "trace": 6972340.800292969
+        "trace": 6970113.5439453125
       },
       {
-        "abs_max": 0.00790578592568636,
-        "abs_mean": 0.00013995618792250752,
+        "abs_max": 0.4967232644557953,
+        "abs_mean": 0.0005013125482946634,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 2.223846912384033,
+        "fro": 10.828568458557129,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -773,13 +844,13 @@
         "trace": null
       },
       {
-        "abs_max": 0.00970458984375,
-        "abs_mean": 0.000160215946380049,
+        "abs_max": 0.421875,
+        "abs_mean": 0.0005726265371777117,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.bfloat16",
         "finite": true,
-        "fro": 2.5021607875823975,
+        "fro": 11.751333236694336,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -819,55 +890,55 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 3.350034236907959,
-        "diag_min": 2.7765111923217773,
+        "diag_max": 3.3568742275238037,
+        "diag_min": 2.779310464859009,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.7081224918365479,
-      "fp16_ortho_to_proj_rel": 0.2381964921951294,
-      "fp16_p2_gram_rel": 0.22383511066436768,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp16_ortho_proj": 0.11347810738680579,
+      "fp16_ortho_supp": 0.2441899287251933,
+      "fp16_p2_gram_rel_fro": 0.17567362440114462,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 0.3986280560493469,
-      "fp16_polar_alignment_rel": 0.12420819699764252,
+      "fp16_p_negative_mass_rel": 0.008129869977405788,
+      "fp16_p_skew_rel_fro": 0.1549439334020665,
+      "fp16_proj_defect_rel": 0.11348550021648407,
+      "fp16_proj_gap_rel": 0.3537150025367737,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          0.8520874381065369
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
+      "fp16_rec_resid": 0.1250259767137595,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 291.0770412552871,
+      "fp16_support_resid_rel": 0.24418844282627106,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.7081226110458374,
-      "fp32_ortho_to_proj_rel": 0.23819099366664886,
-      "fp32_p2_gram_rel": 0.22381651401519775,
+      "fp32_ortho_proj": 0.11347744163811523,
+      "fp32_ortho_supp": 0.24417805268012183,
+      "fp32_p2_gram_rel_fro": 0.17566311426347922,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.3986186981201172,
-      "fp32_polar_alignment_rel": 0.1241724044084549,
+      "fp32_p_negative_mass_rel": 0.008129297465460731,
+      "fp32_p_skew_rel_fro": 0.15493993472640163,
+      "fp32_proj_defect_rel": 0.1134871169924736,
+      "fp32_proj_gap_rel": 0.3537083566188812,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          0.8520874381065369
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
-      },
+      "fp32_rec_resid": 0.12502788987115115,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 291.0770412552871,
+      "fp32_support_resid_rel": 0.2441766858100891,
       "gram_has_finite": true,
       "gram_stable_rank": 291.07704125528716,
       "projector_lambda_max": 0.11870505976604372,
       "projector_lambda_min": -3.8843636219066235e-08,
       "projector_rank": 1678,
       "projector_tau": 1.1870505976604372e-06,
-      "q16_vs_q32_rel_fro": 0.0006476785056293011
+      "q16_vs_q32_rel_fro": 0.0006527906516566873
     },
     "summaries": [
       {
@@ -1039,34 +1110,74 @@
         "trace": 756143.5797729492
       },
       {
-        "abs_max": 0.04085114598274231,
-        "abs_mean": 0.000863183697219938,
-        "diag_max": 0.04085114598274231,
-        "diag_min": 0.030212542042136192,
+        "abs_max": 0.8746569156646729,
+        "abs_mean": 0.8552827835083008,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 4.942991256713867,
+        "fro": 54.739097595214844,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 1.193221926689148,
+        "abs_mean": 1.1692464351654053,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 74.8331298828125,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.04097905382514,
+        "abs_mean": 0.000863184395711869,
+        "diag_max": 0.04097905382514,
+        "diag_min": 0.03026488982141018,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 4.942996501922607,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 866.2286655422399,
-        "sym_rel_fro": 0.0,
-        "trace": 145.48094070330262
+        "stable_rank": 866.2314294462685,
+        "sym_rel_fro": 0.0014409986324608326,
+        "trace": 145.48134404234588
       },
       {
-        "abs_max": 3.350034236907959,
-        "abs_mean": 0.04693306237459183,
-        "diag_max": 3.350034236907959,
-        "diag_min": 2.7765111923217773,
+        "abs_max": 3.3568742275238037,
+        "abs_mean": 0.046933069825172424,
+        "diag_max": 3.3568742275238037,
+        "diag_min": 2.779310464859009,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 307.8546447753906,
+        "fro": 307.85491943359375,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1076,18 +1187,18 @@
           4096,
           4096
         ],
-        "stable_rank": 1663.6403226506486,
+        "stable_rank": 1663.642924189313,
         "sym_rel_fro": 0.0,
-        "trace": 12556.697281122208
+        "trace": 12556.718843460083
       },
       {
-        "abs_max": 1.8242679834365845,
-        "abs_mean": 0.009324711747467518,
-        "diag_max": 1.8242679834365845,
-        "diag_min": 1.1805301904678345,
+        "abs_max": 1.8261526823043823,
+        "abs_mean": 0.009324715472757816,
+        "diag_max": 1.8261526823043823,
+        "diag_min": 1.1780850887298584,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 112.05667114257812,
+        "fro": 112.05677032470703,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1097,18 +1208,18 @@
           4096,
           4096
         ],
-        "stable_rank": 2560.647464787275,
-        "sym_rel_fro": 0.8569498062133789,
-        "trace": 5670.385907173157
+        "stable_rank": 2560.6559433128723,
+        "sym_rel_fro": 0.8569485545158386,
+        "trace": 5670.4001759290695
       },
       {
-        "abs_max": 164.61045837402344,
-        "abs_mean": 1.4916305541992188,
-        "diag_max": 164.61045837402344,
-        "diag_min": 142.134521484375,
+        "abs_max": 164.3822784423828,
+        "abs_mean": 1.4916051626205444,
+        "diag_max": 164.3822784423828,
+        "diag_min": 142.30316162109375,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 12316.8125,
+        "fro": 12316.5751953125,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1118,18 +1229,18 @@
           4096,
           4096
         ],
-        "stable_rank": 2588.1089263207973,
-        "sym_rel_fro": 0.0012183632934466004,
-        "trace": 626598.8869018555
+        "stable_rank": 2588.1256164678293,
+        "sym_rel_fro": 0.0009069573716260493,
+        "trace": 626588.8409576416
       },
       {
-        "abs_max": 1107.5648193359375,
-        "abs_mean": 9.685894012451172,
-        "diag_max": 1107.5648193359375,
-        "diag_min": 964.9036865234375,
+        "abs_max": 1106.1839599609375,
+        "abs_mean": 9.685742378234863,
+        "diag_max": 1106.1839599609375,
+        "diag_min": 965.9242553710938,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 82018.6015625,
+        "fro": 82017.203125,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1139,18 +1250,18 @@
           4096,
           4096
         ],
-        "stable_rank": 2665.389206674511,
+        "stable_rank": 2665.403524052227,
         "sym_rel_fro": 0.0,
-        "trace": 4234407.76953125
+        "trace": 4234346.975463867
       },
       {
-        "abs_max": 0.030857447534799576,
-        "abs_mean": 0.004258298315107822,
+        "abs_max": 0.028631379827857018,
+        "abs_mean": 0.004254607018083334,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 43.77783966064453,
+        "fro": 43.69635009765625,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1165,13 +1276,13 @@
         "trace": null
       },
       {
-        "abs_max": 0.030853271484375,
-        "abs_mean": 0.004258339758962393,
+        "abs_max": 0.02862548828125,
+        "abs_mean": 0.004254645202308893,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float16",
         "finite": true,
-        "fro": 43.77826690673828,
+        "fro": 43.696754455566406,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1211,55 +1322,55 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 3.3770599365234375,
-        "diag_min": 2.82673978805542,
+        "diag_max": 3.373933792114258,
+        "diag_min": 2.8301258087158203,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.6873214840888977,
-      "fp16_ortho_to_proj_rel": 0.3144444227218628,
-      "fp16_p2_gram_rel": 0.48657429218292236,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp16_ortho_proj": 0.33969485599313004,
+      "fp16_ortho_supp": 0.642217307554098,
+      "fp16_p2_gram_rel_fro": 0.4988067809939008,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 0.6785082817077637,
-      "fp16_polar_alignment_rel": 0.47966763377189636,
+      "fp16_p_negative_mass_rel": 0.03558534821830546,
+      "fp16_p_skew_rel_fro": 0.3480199619397849,
+      "fp16_proj_defect_rel": 0.3396744728088379,
+      "fp16_proj_gap_rel": 0.49753570556640625,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          0.834385097026825
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
+      "fp16_rec_resid": 0.4128848153224096,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 291.0805354575567,
+      "fp16_support_resid_rel": 0.6422048807144165,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.6721914410591125,
-      "fp32_ortho_to_proj_rel": 0.25056686997413635,
-      "fp32_p2_gram_rel": 0.21993906795978546,
+      "fp32_ortho_proj": 0.12979919632320938,
+      "fp32_ortho_supp": 0.2452446081509296,
+      "fp32_p2_gram_rel_fro": 0.17691135605337424,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.3924887478351593,
-      "fp32_polar_alignment_rel": 0.13461048901081085,
+      "fp32_p_negative_mass_rel": 0.0084007112162333,
+      "fp32_p_skew_rel_fro": 0.15701141084742193,
+      "fp32_proj_defect_rel": 0.129795104265213,
+      "fp32_proj_gap_rel": 0.3784681260585785,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          0.834385097026825
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
-      },
+      "fp32_rec_resid": 0.1096661667387268,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 291.0805354575567,
+      "fp32_support_resid_rel": 0.24524331092834473,
       "gram_has_finite": true,
       "gram_stable_rank": 291.0805354575567,
       "projector_lambda_max": 0.11870444742313101,
       "projector_lambda_min": -1.4065079519106983e-08,
       "projector_rank": 1683,
       "projector_tau": 1.18704447423131e-06,
-      "q16_vs_q32_rel_fro": 0.16880106925964355
+      "q16_vs_q32_rel_fro": 0.18502198159694672
     },
     "summaries": [
       {
@@ -1431,34 +1542,74 @@
         "trace": 755837.5631561279
       },
       {
-        "abs_max": 0.04135410860180855,
-        "abs_mean": 0.0008619116269983351,
-        "diag_max": 0.04135410860180855,
-        "diag_min": 0.031199470162391663,
+        "abs_max": 0.874626636505127,
+        "abs_mean": 0.8551087975502014,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 4.945104122161865,
+        "fro": 54.72795867919922,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 1.1932392120361328,
+        "abs_mean": 1.1694843769073486,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 74.84835815429688,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.041295647621154785,
+        "abs_mean": 0.0008619145955890417,
+        "diag_max": 0.041295647621154785,
+        "diag_min": 0.031238503754138947,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 4.945181369781494,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 879.1315349213572,
-        "sym_rel_fro": 0.0,
-        "trace": 146.62309509702027
+        "stable_rank": 879.2121522501109,
+        "sym_rel_fro": 0.0014397867489606142,
+        "trace": 146.63210321217775
       },
       {
-        "abs_max": 3.3770599365234375,
-        "abs_mean": 0.046857062727212906,
-        "diag_max": 3.3770599365234375,
-        "diag_min": 2.82673978805542,
+        "abs_max": 3.373933792114258,
+        "abs_mean": 0.04685722291469574,
+        "diag_max": 3.373933792114258,
+        "diag_min": 2.8301258087158203,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 308.1536865234375,
+        "fro": 308.1590881347656,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1468,18 +1619,18 @@
           4096,
           4096
         ],
-        "stable_rank": 1676.7412098303303,
+        "stable_rank": 1676.8105405391207,
         "sym_rel_fro": 0.0,
-        "trace": 12618.287649154663
+        "trace": 12618.76937866211
       },
       {
-        "abs_max": 1.8317025899887085,
-        "abs_mean": 0.009291475638747215,
-        "diag_max": 1.8317025899887085,
-        "diag_min": 1.187766194343567,
+        "abs_max": 1.8308581113815308,
+        "abs_mean": 0.00929141603410244,
+        "diag_max": 1.8308581113815308,
+        "diag_min": 1.1873341798782349,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 112.3311538696289,
+        "fro": 112.33329772949219,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1489,18 +1640,18 @@
           4096,
           4096
         ],
-        "stable_rank": 2581.2062704867562,
-        "sym_rel_fro": 0.8513761758804321,
-        "trace": 5707.048690319061
+        "stable_rank": 2581.306501800258,
+        "sym_rel_fro": 0.8513458371162415,
+        "trace": 5707.268453121185
       },
       {
-        "abs_max": 161.76483154296875,
-        "abs_mean": 1.4563082456588745,
-        "diag_max": 161.76483154296875,
-        "diag_min": 140.08889770507812,
+        "abs_max": 161.4563751220703,
+        "abs_mean": 1.4561314582824707,
+        "diag_max": 161.4563751220703,
+        "diag_min": 139.74269104003906,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 12041.0703125,
+        "fro": 12039.7578125,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1510,18 +1661,18 @@
           4096,
           4096
         ],
-        "stable_rank": 2592.4195772661,
-        "sym_rel_fro": 0.001217929762788117,
-        "trace": 613080.8583679199
+        "stable_rank": 2592.459745726916,
+        "sym_rel_fro": 0.000907671230379492,
+        "trace": 613018.7829589844
       },
       {
-        "abs_max": 1090.5853271484375,
-        "abs_mean": 9.472921371459961,
-        "diag_max": 1090.5853271484375,
-        "diag_min": 951.8540649414062,
+        "abs_max": 1088.7186279296875,
+        "abs_mean": 9.471860885620117,
+        "diag_max": 1088.7186279296875,
+        "diag_min": 949.722412109375,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 80352.0234375,
+        "fro": 80344.140625,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1531,18 +1682,18 @@
           4096,
           4096
         ],
-        "stable_rank": 2670.598779226464,
+        "stable_rank": 2670.639716596178,
         "sym_rel_fro": 0.0,
-        "trace": 4152418.887512207
+        "trace": 4152043.2141723633
       },
       {
-        "abs_max": 0.03754890337586403,
-        "abs_mean": 0.004367617890238762,
+        "abs_max": 0.0352734737098217,
+        "abs_mean": 0.004371648654341698,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 45.144447326660156,
+        "fro": 45.15442657470703,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1557,13 +1708,13 @@
         "trace": null
       },
       {
-        "abs_max": 0.039794921875,
-        "abs_mean": 0.004410521127283573,
+        "abs_max": 0.037353515625,
+        "abs_mean": 0.004411693662405014,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.bfloat16",
         "finite": true,
-        "fro": 45.66259765625,
+        "fro": 45.67036437988281,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1603,55 +1754,55 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 1.0699418783187866,
-        "diag_min": 0.9803969860076904,
+        "diag_max": 1.0701361894607544,
+        "diag_min": 0.980518639087677,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.9917300343513489,
-      "fp16_ortho_to_proj_rel": 0.06623592227697372,
-      "fp16_p2_gram_rel": 0.259672075510025,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp16_ortho_proj": 0.03804458475457733,
+      "fp16_ortho_supp": 0.17946941533367056,
+      "fp16_p2_gram_rel_fro": 0.12847961190867174,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 0.505281388759613,
-      "fp16_polar_alignment_rel": 0.11800826340913773,
+      "fp16_p_negative_mass_rel": 0.00771034287994844,
+      "fp16_p_skew_rel_fro": 0.12475881279535955,
+      "fp16_proj_defect_rel": 0.03802340477705002,
+      "fp16_proj_gap_rel": 0.25206735730171204,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          1.1334254741668701
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
+      "fp16_rec_resid": 0.09552000411403196,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 62.79629681306023,
+      "fp16_support_resid_rel": 0.1794653683900833,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.9917301535606384,
-      "fp32_ortho_to_proj_rel": 0.06622599810361862,
-      "fp32_p2_gram_rel": 0.2596440315246582,
+      "fp32_ortho_proj": 0.03796738327831735,
+      "fp32_ortho_supp": 0.17940682206708572,
+      "fp32_p2_gram_rel_fro": 0.1284336322556842,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.5051654577255249,
-      "fp32_polar_alignment_rel": 0.11807188391685486,
+      "fp32_p_negative_mass_rel": 0.007705627665471612,
+      "fp32_p_skew_rel_fro": 0.1247211034743307,
+      "fp32_proj_defect_rel": 0.03794633969664574,
+      "fp32_proj_gap_rel": 0.25196537375450134,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          1.1334254741668701
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
-      },
+      "fp32_rec_resid": 0.09547803757092149,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 62.79629681306023,
+      "fp32_support_resid_rel": 0.17940287292003632,
       "gram_has_finite": true,
       "gram_stable_rank": 62.79629681306022,
       "projector_lambda_max": 0.15206367174434327,
       "projector_lambda_min": -3.3576434521500135e-08,
       "projector_rank": 64,
       "projector_tau": 1.5206367174434328e-06,
-      "q16_vs_q32_rel_fro": 0.005831622984260321
+      "q16_vs_q32_rel_fro": 0.0019072683062404394
     },
     "summaries": [
       {
@@ -1823,34 +1974,74 @@
         "trace": 1016210.9417724609
       },
       {
-        "abs_max": 0.0008723950013518333,
-        "abs_mean": 6.412025868485216e-06,
-        "diag_max": 0.0006109524401836097,
-        "diag_min": -0.0008723950013518333,
+        "abs_max": 0.9959119558334351,
+        "abs_mean": 0.9922125339508057,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 0.06666531413793564,
+        "fro": 63.50165939331055,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 1.014022707939148,
+        "abs_mean": 1.0078504085540771,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 64.50248718261719,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.0008701207116246223,
+        "abs_mean": 6.413126811821712e-06,
+        "diag_max": 0.0006073201657272875,
+        "diag_min": -0.0008701207116246223,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 0.06666293740272522,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 36.111834436115096,
-        "sym_rel_fro": 0.0,
-        "trace": -0.40061269662305676
+        "stable_rank": 36.01446758492933,
+        "sym_rel_fro": 0.03493090718984604,
+        "trace": -0.4000579866286387
       },
       {
-        "abs_max": 1.0699418783187866,
-        "abs_mean": 0.003484458662569523,
-        "diag_max": 1.0699418783187866,
-        "diag_min": 0.9803969860076904,
+        "abs_max": 1.0701361894607544,
+        "abs_mean": 0.0034848167560994625,
+        "diag_max": 1.0701361894607544,
+        "diag_min": 0.980518639087677,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 67.73394775390625,
+        "fro": 67.73481750488281,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1860,18 +2051,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3849.4205340798812,
+        "stable_rank": 3849.3759987568724,
         "sym_rel_fro": 0.0,
-        "trace": 4202.464896202087
+        "trace": 4202.494559884071
       },
       {
-        "abs_max": 1.030411720275879,
-        "abs_mean": 0.0013082504738122225,
-        "diag_max": 1.030411720275879,
-        "diag_min": 0.9879876375198364,
+        "abs_max": 1.0305389165878296,
+        "abs_mean": 0.0013083342928439379,
+        "diag_max": 1.0305389165878296,
+        "diag_min": 0.9879726767539978,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 64.82642364501953,
+        "fro": 64.82664489746094,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1881,18 +2072,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4032.2626774876103,
-        "sym_rel_fro": 0.176028773188591,
-        "trace": 4116.484252750874
+        "stable_rank": 4032.2553167145115,
+        "sym_rel_fro": 0.17603914439678192,
+        "trace": 4116.495018005371
       },
       {
-        "abs_max": 284.06524658203125,
-        "abs_mean": 0.488739550113678,
-        "diag_max": 284.06524658203125,
-        "diag_min": 240.0534210205078,
+        "abs_max": 284.1595764160156,
+        "abs_mean": 0.48873627185821533,
+        "diag_max": 284.1595764160156,
+        "diag_min": 240.11282348632812,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 16189.8427734375,
+        "fro": 16189.7587890625,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1902,18 +2093,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4014.2586828592666,
-        "sym_rel_fro": 0.00022301665740087628,
-        "trace": 1025758.914352417
+        "stable_rank": 4014.263473953862,
+        "sym_rel_fro": 6.909918010933325e-05,
+        "trace": 1025754.2250671387
       },
       {
-        "abs_max": 1864.8809814453125,
-        "abs_mean": 3.211740493774414,
-        "diag_max": 1864.8809814453125,
-        "diag_min": 1597.5396728515625,
+        "abs_max": 1865.451904296875,
+        "abs_mean": 3.2117207050323486,
+        "diag_max": 1865.451904296875,
+        "diag_min": 1597.899169921875,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 107321.3984375,
+        "fro": 107320.8984375,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1923,18 +2114,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4017.2344228907687,
+        "stable_rank": 4017.2383790180015,
         "sym_rel_fro": 0.0,
-        "trace": 6802208.2734375
+        "trace": 6802179.896728516
       },
       {
-        "abs_max": 0.009172133170068264,
-        "abs_mean": 0.0007780389860272408,
+        "abs_max": 0.008252160623669624,
+        "abs_mean": 0.0007833198178559542,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 8.569498062133789,
+        "fro": 8.22571086883545,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1949,13 +2140,13 @@
         "trace": null
       },
       {
-        "abs_max": 0.00917816162109375,
-        "abs_mean": 0.0007779990555718541,
+        "abs_max": 0.00823974609375,
+        "abs_mean": 0.0007833559648133814,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float16",
         "finite": true,
-        "fro": 8.569258689880371,
+        "fro": 8.226157188415527,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -1995,55 +2186,55 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 1.082327961921692,
-        "diag_min": 0.9895085096359253,
+        "diag_max": 1.0827492475509644,
+        "diag_min": 0.989629328250885,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.9699519872665405,
-      "fp16_ortho_to_proj_rel": 0.19206134974956512,
-      "fp16_p2_gram_rel": 0.7529392242431641,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp16_ortho_proj": 0.8134815920756409,
+      "fp16_ortho_supp": 0.8707556142386582,
+      "fp16_p2_gram_rel_fro": 0.6932019798246419,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 1.038277268409729,
-      "fp16_polar_alignment_rel": 0.8747392892837524,
+      "fp16_p_negative_mass_rel": 0.11161183770489497,
+      "fp16_p_skew_rel_fro": 0.49743457064162555,
+      "fp16_proj_defect_rel": 0.813441276550293,
+      "fp16_proj_gap_rel": 1.4116547107696533,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          1.1194251775741577
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
+      "fp16_rec_resid": 0.6018852900055409,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 62.797079566209874,
+      "fp16_support_resid_rel": 0.8707355856895447,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.9639374613761902,
-      "fp32_ortho_to_proj_rel": 0.07423258572816849,
-      "fp32_p2_gram_rel": 0.26002639532089233,
+      "fp32_ortho_proj": 0.24091773219863724,
+      "fp32_ortho_supp": 0.18851951040282428,
+      "fp32_p2_gram_rel_fro": 0.13530807019890886,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.5007918477058411,
-      "fp32_polar_alignment_rel": 0.13464991748332977,
+      "fp32_p_negative_mass_rel": 0.008503437862803841,
+      "fp32_p_skew_rel_fro": 0.13179665983856642,
+      "fp32_proj_defect_rel": 0.24089813232421875,
+      "fp32_proj_gap_rel": 0.37691593170166016,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          1.1194251775741577
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
-      },
+      "fp32_rec_resid": 0.0676088376859125,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 62.797079566209874,
+      "fp32_support_resid_rel": 0.18851734697818756,
       "gram_has_finite": true,
       "gram_stable_rank": 62.79707956620987,
       "projector_lambda_max": 0.15206390124455546,
       "projector_lambda_min": -1.2492558331218785e-08,
       "projector_rank": 64,
       "projector_tau": 1.5206390124455547e-06,
-      "q16_vs_q32_rel_fro": 0.47566500306129456
+      "q16_vs_q32_rel_fro": 0.4857039153575897
     },
     "summaries": [
       {
@@ -2215,34 +2406,74 @@
         "trace": 1016021.3535614014
       },
       {
-        "abs_max": 0.0008211061940528452,
-        "abs_mean": 6.227926860447042e-06,
-        "diag_max": 0.0008211061940528452,
-        "diag_min": -0.0006507367361336946,
+        "abs_max": 0.9958812594413757,
+        "abs_mean": 0.992119550704956,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 0.06633473187685013,
+        "fro": 63.4957160949707,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 1.014025092124939,
+        "abs_mean": 1.007944941520691,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 64.50853729248047,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.0008205727790482342,
+        "abs_mean": 6.228312486200593e-06,
+        "diag_max": 0.0008205727790482342,
+        "diag_min": -0.0006623876397497952,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 0.06633400171995163,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 28.595100647516773,
-        "sym_rel_fro": 0.0,
-        "trace": 0.35472092924942444
+        "stable_rank": 28.717613753105162,
+        "sym_rel_fro": 0.03511849790811539,
+        "trace": 0.3554760940385222
       },
       {
-        "abs_max": 1.082327961921692,
-        "abs_mean": 0.0034592042211443186,
-        "diag_max": 1.082327961921692,
-        "diag_min": 0.9895085096359253,
+        "abs_max": 1.0827492475509644,
+        "abs_mean": 0.0034596319310367107,
+        "diag_max": 1.0827492475509644,
+        "diag_min": 0.989629328250885,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 68.33126831054688,
+        "fro": 68.33240509033203,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2252,18 +2483,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3856.050856376247,
+        "stable_rank": 3855.996529351511,
         "sym_rel_fro": 0.0,
-        "trace": 4243.174393951893
+        "trace": 4243.2147825956345
       },
       {
-        "abs_max": 1.0380072593688965,
-        "abs_mean": 0.0012977472506463528,
-        "diag_max": 1.0380072593688965,
-        "diag_min": 0.9924048781394958,
+        "abs_max": 1.0379986763000488,
+        "abs_mean": 0.0012978378217667341,
+        "diag_max": 1.0379986763000488,
+        "diag_min": 0.992385745048523,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 65.13965606689453,
+        "fro": 65.13996124267578,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2273,18 +2504,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4033.6697821898397,
-        "sym_rel_fro": 0.17406323552131653,
-        "trace": 4137.096153497696
+        "stable_rank": 4033.6604258080715,
+        "sym_rel_fro": 0.17407642304897308,
+        "trace": 4137.111049234867
       },
       {
-        "abs_max": 282.3601379394531,
-        "abs_mean": 0.48018819093704224,
-        "diag_max": 282.3601379394531,
-        "diag_min": 237.61947631835938,
+        "abs_max": 282.4176025390625,
+        "abs_mean": 0.4801841378211975,
+        "diag_max": 282.4176025390625,
+        "diag_min": 237.4993438720703,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 16021.810546875,
+        "fro": 16021.7021484375,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2294,18 +2525,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4014.675075203006,
-        "sym_rel_fro": 0.00022255613293964416,
-        "trace": 1015165.363571167
+        "stable_rank": 4014.6794137694405,
+        "sym_rel_fro": 6.856840627733618e-05,
+        "trace": 1015159.0520629883
       },
       {
-        "abs_max": 1854.5423583984375,
-        "abs_mean": 3.159852981567383,
-        "diag_max": 1854.5423583984375,
-        "diag_min": 1582.60693359375,
+        "abs_max": 1854.89013671875,
+        "abs_mean": 3.1598291397094727,
+        "diag_max": 1854.89013671875,
+        "diag_min": 1582.0792236328125,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 106303.1953125,
+        "fro": 106302.546875,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2315,18 +2546,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4017.6084544195974,
+        "stable_rank": 4017.61199947807,
         "sym_rel_fro": 0.0,
-        "trace": 6737986.168823242
+        "trace": 6737947.971313477
       },
       {
-        "abs_max": 0.02197152003645897,
-        "abs_mean": 0.001102388370782137,
+        "abs_max": 0.023539986461400986,
+        "abs_mean": 0.0010924290399998426,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 13.685453414916992,
+        "fro": 13.51517105102539,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2341,13 +2572,13 @@
         "trace": null
       },
       {
-        "abs_max": 0.03076171875,
-        "abs_mean": 0.0012235039612278342,
+        "abs_max": 0.02880859375,
+        "abs_mean": 0.0012106271460652351,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.bfloat16",
         "finite": true,
-        "fro": 15.231865882873535,
+        "fro": 15.04478931427002,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2387,55 +2618,55 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 2.1310391426086426,
-        "diag_min": 1.8918168544769287,
+        "diag_max": 2.1310548782348633,
+        "diag_min": 1.8918986320495605,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.05865944176912308,
-      "fp16_ortho_to_proj_rel": 0.05861671641469002,
-      "fp16_p2_gram_rel": 0.04834417626261711,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp16_ortho_proj": 0.058187060166928324,
+      "fp16_ortho_supp": 0.04808035244132567,
+      "fp16_p2_gram_rel_fro": 0.048236034084014535,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 0.0002546086616348475,
-      "fp16_polar_alignment_rel": 0.05408859625458717,
+      "fp16_p_negative_mass_rel": 0.0,
+      "fp16_p_skew_rel_fro": 0.00012782284127332158,
+      "fp16_proj_defect_rel": 0.0582713708281517,
+      "fp16_proj_gap_rel": 0.05861690640449524,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          0.5190079808235168
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
+      "fp16_rec_resid": 0.05487700358365391,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 3179.049892541307,
+      "fp16_support_resid_rel": 0.04816032201051712,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.05866958573460579,
-      "fp32_ortho_to_proj_rel": 0.05862685665488243,
-      "fp32_p2_gram_rel": 0.048353176563978195,
+      "fp32_ortho_proj": 0.05820053635070875,
+      "fp32_ortho_supp": 0.04808980335454229,
+      "fp32_p2_gram_rel_fro": 0.0482445841685463,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.00025480709155090153,
-      "fp32_polar_alignment_rel": 0.054097987711429596,
+      "fp32_p_negative_mass_rel": 0.0,
+      "fp32_p_skew_rel_fro": 0.00012796722990993955,
+      "fp32_proj_defect_rel": 0.05828006565570831,
+      "fp32_proj_gap_rel": 0.058626655489206314,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          0.5190079808235168
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
-      },
+      "fp32_rec_resid": 0.054872393175743404,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 3179.049892541307,
+      "fp32_support_resid_rel": 0.04816976934671402,
       "gram_has_finite": true,
       "gram_stable_rank": 3179.049892541308,
       "projector_lambda_max": 0.05788549438853621,
       "projector_lambda_min": 0.005308762441904034,
       "projector_rank": 4096,
       "projector_tau": 5.788549438853622e-07,
-      "q16_vs_q32_rel_fro": 0.00020710307580884546
+      "q16_vs_q32_rel_fro": 0.00020787803805433214
     },
     "summaries": [
       {
@@ -2607,34 +2838,74 @@
         "trace": 7936.621227622032
       },
       {
-        "abs_max": 0.005958040710538626,
-        "abs_mean": 2.646732173161581e-05,
-        "diag_max": 0.005958040710538626,
-        "diag_min": 0.0017330602277070284,
+        "abs_max": 0.07745126634836197,
+        "abs_mean": 0.061372801661491394,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 0.28187963366508484,
+        "fro": 3.944209098815918,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 23.985918045043945,
+        "abs_mean": 16.436975479125977,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 1056.8148193359375,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.0059537943452596664,
+        "abs_mean": 2.6467258066986687e-05,
+        "diag_max": 0.0059537943452596664,
+        "diag_min": 0.0017333574360236526,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 0.2818783223628998,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 3014.61705555612,
-        "sym_rel_fro": 0.0,
-        "trace": 15.476749577908777
+        "stable_rank": 3014.609013705493,
+        "sym_rel_fro": 0.00015209452249109745,
+        "trace": 15.476657545892522
       },
       {
-        "abs_max": 2.1310391426086426,
-        "abs_mean": 0.001425906433723867,
-        "diag_max": 2.1310391426086426,
-        "diag_min": 1.8918168544769287,
+        "abs_max": 2.1310548782348633,
+        "abs_mean": 0.0014259058516472578,
+        "diag_max": 2.1310548782348633,
+        "diag_min": 1.8918986320495605,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 122.82624816894531,
+        "fro": 122.826171875,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2644,18 +2915,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4087.8964903996252,
+        "stable_rank": 4087.8964922158275,
         "sym_rel_fro": 0.0,
-        "trace": 7853.100318193436
+        "trace": 7853.095400094986
       },
       {
-        "abs_max": 1.459274411201477,
+        "abs_max": 1.4592797756195068,
         "abs_mean": 0.0006790977204218507,
-        "diag_max": 1.459274411201477,
-        "diag_min": 1.3747599124908447,
+        "diag_max": 1.4592797756195068,
+        "diag_min": 1.3747897148132324,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 88.61772155761719,
+        "fro": 88.61769104003906,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2665,18 +2936,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4092.247013050955,
-        "sym_rel_fro": 0.04178989306092262,
-        "trace": 5668.935254812241
+        "stable_rank": 4092.247011725708,
+        "sym_rel_fro": 0.04178991913795471,
+        "trace": 5668.933476924896
       },
       {
-        "abs_max": 1.2923473119735718,
-        "abs_mean": 0.0035986059810966253,
-        "diag_max": 1.2923473119735718,
-        "diag_min": 0.6784124374389648,
+        "abs_max": 1.2925057411193848,
+        "abs_mean": 0.003598610172048211,
+        "diag_max": 1.2925057411193848,
+        "diag_min": 0.6784057021141052,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 67.7325210571289,
+        "fro": 67.7325668334961,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2686,18 +2957,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3765.9271137013666,
-        "sym_rel_fro": 2.6614326998242177e-05,
-        "trace": 4156.551840484142
+        "stable_rank": 3765.9269716352933,
+        "sym_rel_fro": 2.6846693799598143e-05,
+        "trace": 4156.554532527924
       },
       {
-        "abs_max": 9.277654647827148,
-        "abs_mean": 0.0258164219558239,
-        "diag_max": 9.277654647827148,
-        "diag_min": 4.936637878417969,
+        "abs_max": 9.278613090515137,
+        "abs_mean": 0.025816448032855988,
+        "diag_max": 9.278613090515137,
+        "diag_min": 4.9365973472595215,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 485.51458740234375,
+        "fro": 485.51483154296875,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2707,18 +2978,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3766.626433123754,
+        "stable_rank": 3766.626310876948,
         "sym_rel_fro": 0.0,
-        "trace": 29797.411517620087
+        "trace": 29797.427822589874
       },
       {
-        "abs_max": 0.699471116065979,
-        "abs_mean": 0.003804257605224848,
+        "abs_max": 0.6994712948799133,
+        "abs_mean": 0.0038042585365474224,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 62.16236877441406,
+        "fro": 62.16238021850586,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2734,12 +3005,12 @@
       },
       {
         "abs_max": 0.69970703125,
-        "abs_mean": 0.0038042785599827766,
+        "abs_mean": 0.0038042780943214893,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float16",
         "finite": true,
-        "fro": 62.16273880004883,
+        "fro": 62.162742614746094,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -2779,55 +3050,55 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 2.1317083835601807,
-        "diag_min": 1.8918073177337646,
+        "diag_max": 2.131727695465088,
+        "diag_min": 1.8918907642364502,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.062360163778066635,
-      "fp16_ortho_to_proj_rel": 0.062317200005054474,
-      "fp16_p2_gram_rel": 0.05551678314805031,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp16_ortho_proj": 0.06187926185897108,
+      "fp16_ortho_supp": 0.051762643579539754,
+      "fp16_p2_gram_rel_fro": 0.05542874307984163,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 0.0017714203568175435,
-      "fp16_polar_alignment_rel": 0.05778362974524498,
+      "fp16_p_negative_mass_rel": 0.0,
+      "fp16_p_skew_rel_fro": 0.0008854516617743262,
+      "fp16_proj_defect_rel": 0.0619458369910717,
+      "fp16_proj_gap_rel": 0.06232312694191933,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          0.5190045833587646
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
+      "fp16_rec_resid": 0.08556224261059667,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 3179.083666657034,
+      "fp16_support_resid_rel": 0.05182614177465439,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.06224361062049866,
-      "fp32_ortho_to_proj_rel": 0.062200579792261124,
-      "fp32_p2_gram_rel": 0.05538581684231758,
+      "fp32_ortho_proj": 0.06176758520946326,
+      "fp32_ortho_supp": 0.05159203404764526,
+      "fp32_p2_gram_rel_fro": 0.05526805624375062,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.000618727644905448,
-      "fp32_polar_alignment_rel": 0.0576261505484581,
+      "fp32_p_negative_mass_rel": 0.0,
+      "fp32_p_skew_rel_fro": 0.00030952428833912253,
+      "fp32_proj_defect_rel": 0.061840638518333435,
+      "fp32_proj_gap_rel": 0.062199342995882034,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          0.5190045833587646
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
-      },
+      "fp32_rec_resid": 0.08544917281840066,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 3179.083666657034,
+      "fp32_support_resid_rel": 0.05167289078235626,
       "gram_has_finite": true,
       "gram_stable_rank": 3179.083666657034,
       "projector_lambda_max": 0.05788944962089169,
       "projector_lambda_min": 0.0053087713769059235,
       "projector_rank": 4096,
       "projector_tau": 5.788944962089169e-07,
-      "q16_vs_q32_rel_fro": 0.0023996829986572266
+      "q16_vs_q32_rel_fro": 0.00239842152222991
     },
     "summaries": [
       {
@@ -2999,34 +3270,74 @@
         "trace": 7936.516368031502
       },
       {
-        "abs_max": 0.005958043970167637,
-        "abs_mean": 2.6466450435691513e-05,
-        "diag_max": 0.005958043970167637,
-        "diag_min": 0.0017330595292150974,
+        "abs_max": 0.07745157182216644,
+        "abs_mean": 0.061371996998786926,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 0.2818716764450073,
+        "fro": 3.9441559314727783,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 23.984981536865234,
+        "abs_mean": 16.43716812133789,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 1056.826171875,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.005953819025307894,
+        "abs_mean": 2.6466477720532566e-05,
+        "diag_max": 0.005953819025307894,
+        "diag_min": 0.0017334235599264503,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 0.28187161684036255,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 3014.6237748531958,
-        "sym_rel_fro": 0.0,
-        "trace": 15.476331537705846
+        "stable_rank": 3014.618207313746,
+        "sym_rel_fro": 0.00015145775978453457,
+        "trace": 15.47631340706721
       },
       {
-        "abs_max": 2.1317083835601807,
-        "abs_mean": 0.0014259173767641187,
-        "diag_max": 2.1317083835601807,
-        "diag_min": 1.8918073177337646,
+        "abs_max": 2.131727695465088,
+        "abs_mean": 0.0014259172603487968,
+        "diag_max": 2.131727695465088,
+        "diag_min": 1.8918907642364502,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 122.82626342773438,
+        "fro": 122.82624816894531,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3036,18 +3347,18 @@
           4096,
           4096
         ],
-        "stable_rank": 4087.8968319543956,
+        "stable_rank": 4087.8968492162894,
         "sym_rel_fro": 0.0,
-        "trace": 7853.101592063904
+        "trace": 7853.10062456131
       },
       {
-        "abs_max": 1.4595032930374146,
-        "abs_mean": 0.0006791017949581146,
-        "diag_max": 1.4595032930374146,
-        "diag_min": 1.3747564554214478,
+        "abs_max": 1.4595099687576294,
+        "abs_mean": 0.0006791017367504537,
+        "diag_max": 1.4595099687576294,
+        "diag_min": 1.3747867345809937,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 88.61772918701172,
+        "fro": 88.61772155761719,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3057,15 +3368,15 @@
           4096,
           4096
         ],
-        "stable_rank": 4092.2470446842326,
-        "sym_rel_fro": 0.041790395975112915,
-        "trace": 5668.9357380867
+        "stable_rank": 4092.24704984183,
+        "sym_rel_fro": 0.04179040715098381,
+        "trace": 5668.935395121574
       },
       {
-        "abs_max": 1.2923449277877808,
-        "abs_mean": 0.003598534967750311,
-        "diag_max": 1.2923449277877808,
-        "diag_min": 0.6782299876213074,
+        "abs_max": 1.2925024032592773,
+        "abs_mean": 0.00359853426925838,
+        "diag_max": 1.2925024032592773,
+        "diag_min": 0.6782224774360657,
         "dtype": "torch.float32",
         "finite": true,
         "fro": 67.73161315917969,
@@ -3078,15 +3389,15 @@
           4096,
           4096
         ],
-        "stable_rank": 3765.93206944105,
-        "sym_rel_fro": 2.6431840524310246e-05,
-        "trace": 4156.49874830246
+        "stable_rank": 3765.932425446131,
+        "sym_rel_fro": 2.6405086828162894e-05,
+        "trace": 4156.499034404755
       },
       {
-        "abs_max": 9.277647018432617,
-        "abs_mean": 0.02581585757434368,
-        "diag_max": 9.277647018432617,
-        "diag_min": 4.935553550720215,
+        "abs_max": 9.278599739074707,
+        "abs_mean": 0.025815851986408234,
+        "diag_max": 9.278599739074707,
+        "diag_min": 4.9355082511901855,
         "dtype": "torch.float32",
         "finite": true,
         "fro": 485.5079345703125,
@@ -3099,18 +3410,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3766.6323940507427,
+        "stable_rank": 3766.6326931570907,
         "sym_rel_fro": 0.0,
-        "trace": 29797.028878211975
+        "trace": 29797.030605316162
       },
       {
-        "abs_max": 0.6962015628814697,
-        "abs_mean": 0.003796778619289398,
+        "abs_max": 0.6962010860443115,
+        "abs_mean": 0.0037967832759022713,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 62.040706634521484,
+        "fro": 62.04076385498047,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3126,12 +3437,12 @@
       },
       {
         "abs_max": 0.6953125,
-        "abs_mean": 0.0037966854870319366,
+        "abs_mean": 0.003796679200604558,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.bfloat16",
         "finite": true,
-        "fro": 62.039100646972656,
+        "fro": 62.03889465332031,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3171,55 +3482,55 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 3.585803747177124,
-        "diag_min": 3.1064507961273193,
+        "diag_max": 3.5874414443969727,
+        "diag_min": 3.106353521347046,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.06903213262557983,
-      "fp16_ortho_to_proj_rel": 0.06364059448242188,
-      "fp16_p2_gram_rel": 0.05005132034420967,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp16_ortho_proj": 0.05209333709728534,
+      "fp16_ortho_supp": 0.05521175449552326,
+      "fp16_p2_gram_rel_fro": 0.0513299966043305,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 0.028150470927357674,
-      "fp16_polar_alignment_rel": 0.054403483867645264,
+      "fp16_p_negative_mass_rel": 7.954203396431184e-05,
+      "fp16_p_skew_rel_fro": 0.017929683256179413,
+      "fp16_proj_defect_rel": 0.05216314271092415,
+      "fp16_proj_gap_rel": 0.0661102905869484,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          0.2856793999671936
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
+      "fp16_rec_resid": 0.049956705956982324,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 1997.2882966508532,
+      "fp16_support_resid_rel": 0.0552762933075428,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.0690385028719902,
-      "fp32_ortho_to_proj_rel": 0.06364677101373672,
-      "fp32_p2_gram_rel": 0.050064146518707275,
+      "fp32_ortho_proj": 0.05210239160584903,
+      "fp32_ortho_supp": 0.055218761585885595,
+      "fp32_p2_gram_rel_fro": 0.05133840778233254,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.028148261830210686,
-      "fp32_polar_alignment_rel": 0.05441494286060333,
+      "fp32_p_negative_mass_rel": 7.951785498135209e-05,
+      "fp32_p_skew_rel_fro": 0.01792738625745958,
+      "fp32_proj_defect_rel": 0.05216565355658531,
+      "fp32_proj_gap_rel": 0.06611547619104385,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          0.2856793999671936
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
-      },
+      "fp32_rec_resid": 0.049960123952738335,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 1997.2882966508532,
+      "fp32_support_resid_rel": 0.055283647030591965,
       "gram_has_finite": true,
       "gram_stable_rank": 1997.2882966508532,
       "projector_lambda_max": 0.05361961337032233,
       "projector_lambda_min": -1.1091789835659657e-07,
       "projector_rank": 4077,
       "projector_tau": 5.361961337032234e-07,
-      "q16_vs_q32_rel_fro": 0.00024071089865174145
+      "q16_vs_q32_rel_fro": 0.000239043656620197
     },
     "summaries": [
       {
@@ -3391,34 +3702,74 @@
         "trace": 75475.01755428314
       },
       {
-        "abs_max": 0.03806723281741142,
-        "abs_mean": 0.000731971871573478,
-        "diag_max": 0.03806723281741142,
-        "diag_min": 0.02874555066227913,
+        "abs_max": 0.29113033413887024,
+        "abs_mean": 0.2635045647621155,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 4.283892631530762,
+        "fro": 16.870853424072266,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 4.248058319091797,
+        "abs_mean": 3.7979612350463867,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 243.16453552246094,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.03809785842895508,
+        "abs_mean": 0.0007319700671359897,
+        "diag_max": 0.03809785842895508,
+        "diag_min": 0.02874373272061348,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 4.283885478973389,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 1009.6173227561394,
-        "sym_rel_fro": 0.0,
-        "trace": 136.11844914965332
+        "stable_rank": 1009.6219774091514,
+        "sym_rel_fro": 0.0006829471094533801,
+        "trace": 136.11852190084755
       },
       {
-        "abs_max": 3.585803747177124,
-        "abs_mean": 0.037910766899585724,
-        "diag_max": 3.585803747177124,
-        "diag_min": 3.1064507961273193,
+        "abs_max": 3.5874414443969727,
+        "abs_mean": 0.03791066259145737,
+        "diag_max": 3.5874414443969727,
+        "diag_min": 3.106353521347046,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 286.3874816894531,
+        "fro": 286.38720703125,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3428,18 +3779,18 @@
           4096,
           4096
         ],
-        "stable_rank": 2282.311242296858,
+        "stable_rank": 2282.317196357582,
         "sym_rel_fro": 0.0,
-        "trace": 13681.744318246841
+        "trace": 13681.748217105865
       },
       {
-        "abs_max": 1.8575106859207153,
-        "abs_mean": 0.0072691841050982475,
-        "diag_max": 1.8575106859207153,
-        "diag_min": 1.5299447774887085,
+        "abs_max": 1.8576908111572266,
+        "abs_mean": 0.007269197143614292,
+        "diag_max": 1.8576908111572266,
+        "diag_min": 1.5302668809890747,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 116.968994140625,
+        "fro": 116.96900939941406,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3449,18 +3800,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3292.5582264179848,
-        "sym_rel_fro": 0.6233794689178467,
-        "trace": 6711.776294708252
+        "stable_rank": 3292.561020208861,
+        "sym_rel_fro": 0.623378574848175,
+        "trace": 6711.780108451843
       },
       {
-        "abs_max": 6.382807731628418,
-        "abs_mean": 0.236305370926857,
-        "diag_max": 6.382807731628418,
-        "diag_min": 3.1983258724212646,
+        "abs_max": 6.37720251083374,
+        "abs_mean": 0.2363215684890747,
+        "diag_max": 6.37720251083374,
+        "diag_min": 3.1980254650115967,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 1250.458740234375,
+        "fro": 1250.5430908203125,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3470,18 +3821,18 @@
           4096,
           4096
         ],
-        "stable_rank": 212.92069134489816,
-        "sym_rel_fro": 0.0023416702169924974,
-        "trace": 18246.44701385498
+        "stable_rank": 212.90184202522866,
+        "sym_rel_fro": 0.0030014077201485634,
+        "trace": 18246.87042117119
       },
       {
-        "abs_max": 51.11033248901367,
-        "abs_mean": 1.6667582988739014,
-        "diag_max": 51.11033248901367,
-        "diag_min": 28.434232711791992,
+        "abs_max": 51.076412200927734,
+        "abs_mean": 1.6668505668640137,
+        "diag_max": 51.076412200927734,
+        "diag_min": 28.432415008544922,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 8899.1728515625,
+        "fro": 8899.6455078125,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3491,18 +3842,18 @@
           4096,
           4096
         ],
-        "stable_rank": 301.6954839912698,
+        "stable_rank": 301.6734308394462,
         "sym_rel_fro": 0.0,
-        "trace": 154573.14602851868
+        "trace": 154575.70833969116
       },
       {
-        "abs_max": 0.04352307319641113,
-        "abs_mean": 0.006091197486966848,
+        "abs_max": 0.043571747839450836,
+        "abs_mean": 0.006091733928769827,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 62.537689208984375,
+        "fro": 62.54313659667969,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3517,13 +3868,13 @@
         "trace": null
       },
       {
-        "abs_max": 0.04351806640625,
-        "abs_mean": 0.006091231480240822,
+        "abs_max": 0.0435791015625,
+        "abs_mean": 0.0060917679220438,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float16",
         "finite": true,
-        "fro": 62.53803634643555,
+        "fro": 62.543487548828125,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3563,55 +3914,55 @@
         "info_before_shift": 0
       },
       "chol1_probe": {
-        "diag_max": 3.5891969203948975,
-        "diag_min": 3.107184410095215,
+        "diag_max": 3.5898661613464355,
+        "diag_min": 3.107475996017456,
         "info_before_shift": 0
       },
-      "fp16_gram_q_finite": true,
-      "fp16_ortho_to_I_rel": 0.08237052708864212,
-      "fp16_ortho_to_proj_rel": 0.08158465474843979,
-      "fp16_p2_gram_rel": 0.07871229946613312,
+      "fp16_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
+      },
+      "fp16_ortho_proj": 0.06915896868764561,
+      "fp16_ortho_supp": 0.08453017334265775,
+      "fp16_p2_gram_rel_fro": 0.07925612203198969,
       "fp16_p_finite": true,
-      "fp16_p_skew_rel": 0.04923126474022865,
-      "fp16_polar_alignment_rel": 0.0808713361620903,
+      "fp16_p_negative_mass_rel": 8.695884510108264e-05,
+      "fp16_p_skew_rel_fro": 0.02663767263072344,
+      "fp16_proj_defect_rel": 0.0691867247223854,
+      "fp16_proj_gap_rel": 0.08370222896337509,
       "fp16_q_finite": true,
-      "fp16_stabilization": {
-        "alpha_log": [
-          0.27440568804740906
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
+      "fp16_rec_resid": 0.09745849709314382,
+      "fp16_s_finite": true,
+      "fp16_stable_rank": 1997.301904660658,
+      "fp16_support_resid_rel": 0.08455956727266312,
+      "fp32_chol_stats": {
+        "calls": 2,
+        "max_jitter": 0.0,
+        "shifted_calls": 0,
+        "total_retries": 0
       },
-      "fp32_gram_q_finite": true,
-      "fp32_ortho_to_I_rel": 0.06912779808044434,
-      "fp32_ortho_to_proj_rel": 0.06813944876194,
-      "fp32_p2_gram_rel": 0.05690794438123703,
+      "fp32_ortho_proj": 0.0563660871898876,
+      "fp32_ortho_supp": 0.058422950792712695,
+      "fp32_p2_gram_rel_fro": 0.057732029744096205,
       "fp32_p_finite": true,
-      "fp32_p_skew_rel": 0.03203938156366348,
-      "fp32_polar_alignment_rel": 0.05838358774781227,
+      "fp32_p_negative_mass_rel": 8.484302695511724e-05,
+      "fp32_p_skew_rel_fro": 0.018782429423493868,
+      "fp32_proj_defect_rel": 0.056426040828228,
+      "fp32_proj_gap_rel": 0.07056700438261032,
       "fp32_q_finite": true,
-      "fp32_stabilization": {
-        "alpha_log": [
-          0.27440568804740906
-        ],
-        "ell0": 0.001,
-        "retries": 0,
-        "s_c_log": [
-          0.0
-        ],
-        "theta": 1.0
-      },
+      "fp32_rec_resid": 0.0816721588236391,
+      "fp32_s_finite": true,
+      "fp32_stable_rank": 1997.301904660658,
+      "fp32_support_resid_rel": 0.05848877131938934,
       "gram_has_finite": true,
       "gram_stable_rank": 1997.3019046606585,
       "projector_lambda_max": 0.05362039683497949,
       "projector_lambda_min": -2.950448897265193e-08,
       "projector_rank": 4078,
       "projector_tau": 5.362039683497949e-07,
-      "q16_vs_q32_rel_fro": 0.02636796608567238
+      "q16_vs_q32_rel_fro": 0.026651656255126
     },
     "summaries": [
       {
@@ -3783,34 +4134,74 @@
         "trace": 75424.1944847107
       },
       {
-        "abs_max": 0.03813038393855095,
-        "abs_mean": 0.0007321287412196398,
-        "diag_max": 0.03813038393855095,
-        "diag_min": 0.028758861124515533,
+        "abs_max": 0.2910804748535156,
+        "abs_mean": 0.26341086626052856,
+        "diag_max": null,
+        "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 4.285350799560547,
+        "fro": 16.864850997924805,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
-        "name": "cross_term",
+        "name": "sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 4.248636245727539,
+        "abs_mean": 3.799309730529785,
+        "diag_max": null,
+        "diag_min": null,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 243.25082397460938,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "inv_sqrt_diag_h0",
+        "nan_count": 0,
+        "shape": [
+          4096
+        ],
+        "stable_rank": null,
+        "sym_rel_fro": null,
+        "trace": null
+      },
+      {
+        "abs_max": 0.03814290091395378,
+        "abs_mean": 0.0007321185548789799,
+        "diag_max": 0.03814290091395378,
+        "diag_min": 0.02876431681215763,
+        "dtype": "torch.float32",
+        "finite": true,
+        "fro": 4.285284042358398,
+        "inf_count": 0,
+        "max_eig": null,
+        "min_eig": null,
+        "name": "rhs_step1",
         "nan_count": 0,
         "shape": [
           4096,
           4096
         ],
-        "stable_rank": 1010.4329612187166,
-        "sym_rel_fro": 0.0,
-        "trace": 136.2197715677321
+        "stable_rank": 1010.4228051834458,
+        "sym_rel_fro": 0.0006631329888477921,
+        "trace": 136.21695443987846
       },
       {
-        "abs_max": 3.5891969203948975,
-        "abs_mean": 0.037916846573352814,
-        "diag_max": 3.5891969203948975,
-        "diag_min": 3.107184410095215,
+        "abs_max": 3.5898661613464355,
+        "abs_mean": 0.037916310131549835,
+        "diag_max": 3.5898661613464355,
+        "diag_min": 3.107475996017456,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 286.4712829589844,
+        "fro": 286.46771240234375,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3820,18 +4211,18 @@
           4096,
           4096
         ],
-        "stable_rank": 2282.8130895592976,
+        "stable_rank": 2282.819760814175,
         "sym_rel_fro": 0.0,
-        "trace": 13687.25219631195
+        "trace": 13687.101545095444
       },
       {
-        "abs_max": 1.8572759628295898,
-        "abs_mean": 0.007267750333994627,
-        "diag_max": 1.8572759628295898,
-        "diag_min": 1.5310194492340088,
+        "abs_max": 1.8575916290283203,
+        "abs_mean": 0.0072676921263337135,
+        "diag_max": 1.8575916290283203,
+        "diag_min": 1.5311203002929688,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 116.9925308227539,
+        "fro": 116.99188995361328,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3841,18 +4232,18 @@
           4096,
           4096
         ],
-        "stable_rank": 3293.1293418917226,
-        "sym_rel_fro": 0.6231622099876404,
-        "trace": 6713.70931828022
+        "stable_rank": 3293.13150526479,
+        "sym_rel_fro": 0.6231616139411926,
+        "trace": 6713.674594640732
       },
       {
-        "abs_max": 6.1683878898620605,
-        "abs_mean": 0.22294682264328003,
-        "diag_max": 6.1683878898620605,
-        "diag_min": 3.162048816680908,
+        "abs_max": 6.151954650878906,
+        "abs_mean": 0.22300595045089722,
+        "diag_max": 6.151954650878906,
+        "diag_min": 3.158128499984741,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 1181.4381103515625,
+        "fro": 1181.736083984375,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3862,18 +4253,18 @@
           4096,
           4096
         ],
-        "stable_rank": 227.89499444176278,
-        "sym_rel_fro": 0.0023474881891161203,
-        "trace": 17835.215359687805
+        "stable_rank": 227.82911527714973,
+        "sym_rel_fro": 0.002907669637352228,
+        "trace": 17837.135565280914
       },
       {
-        "abs_max": 49.80634689331055,
-        "abs_mean": 1.5895224809646606,
-        "diag_max": 49.80634689331055,
-        "diag_min": 28.211162567138672,
+        "abs_max": 49.70689392089844,
+        "abs_mean": 1.5898630619049072,
+        "diag_max": 49.70689392089844,
+        "diag_min": 28.187437057495117,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 8502.609375,
+        "fro": 8504.3193359375,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3883,18 +4274,18 @@
           4096,
           4096
         ],
-        "stable_rank": 319.8123341579751,
+        "stable_rank": 319.73259784808715,
         "sym_rel_fro": 0.0,
-        "trace": 152054.6814918518
+        "trace": 152066.30232429504
       },
       {
-        "abs_max": 0.043706148862838745,
-        "abs_mean": 0.0060799322091042995,
+        "abs_max": 0.04373413324356079,
+        "abs_mean": 0.006080993916839361,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.float32",
         "finite": true,
-        "fro": 62.4239501953125,
+        "fro": 62.434837341308594,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
@@ -3909,13 +4300,13 @@
         "trace": null
       },
       {
-        "abs_max": 0.043701171875,
-        "abs_mean": 0.006080894265323877,
+        "abs_max": 0.04443359375,
+        "abs_mean": 0.006083362735807896,
         "diag_max": null,
         "diag_min": null,
         "dtype": "torch.bfloat16",
         "finite": true,
-        "fro": 62.435523986816406,
+        "fro": 62.460819244384766,
         "inf_count": 0,
         "max_eig": null,
         "min_eig": null,
